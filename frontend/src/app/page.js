@@ -3,10 +3,12 @@
 import { useState, useEffect } from "react";
 import LoginPage from "@/components/LoginPage";
 import DashboardPage from "@/components/DashboardPage";
+import WorkspacePage from "@/components/WorkspacePage";
 
 export default function Home() {
   const [isMounted, setIsMounted] = useState(false);
   const [user, setUser] = useState(null);
+  const [activeProject, setActiveProject] = useState(null);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -26,6 +28,7 @@ export default function Home() {
 
   const handleLogout = () => {
     setUser(null);
+    setActiveProject(null);
     localStorage.removeItem("current_user");
   };
 
@@ -66,5 +69,22 @@ export default function Home() {
     return <LoginPage onLogin={handleLogin} />;
   }
 
-  return <DashboardPage username={user} onLogout={handleLogout} />;
+  if (activeProject) {
+    return (
+      <WorkspacePage
+        project={activeProject}
+        username={user}
+        onBack={() => setActiveProject(null)}
+      />
+    );
+  }
+
+  return (
+    <DashboardPage 
+      username={user} 
+      onLogout={handleLogout} 
+      onOpenProject={(project) => setActiveProject(project)}
+    />
+  );
 }
+

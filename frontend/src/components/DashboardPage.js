@@ -31,7 +31,7 @@ const INITIAL_REPOS = [
   }
 ];
 
-export default function DashboardPage({ username, onLogout }) {
+export default function DashboardPage({ username, onLogout, onOpenProject }) {
   const [repos, setRepos] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [visibilityFilter, setVisibilityFilter] = useState("all");
@@ -44,9 +44,21 @@ export default function DashboardPage({ username, onLogout }) {
   const [newVisibility, setNewVisibility] = useState("private");
   const [formError, setFormError] = useState("");
 
-  // Load repos from localstorage or load initial repos
+  // Load repos from backend or localstorage fallback
   useEffect(() => {
-    const timer = setTimeout(() => {
+    const loadRepos = async () => {
+      try {
+        const response = await fetch("http://localhost:8000/api/v1/projects/");
+        if (response.ok) {
+          const data = await response.json();
+          setRepos(data);
+          return;
+        }
+      } catch (err) {
+        console.warn("Backend not running or unreachable, falling back to localStorage:", err);
+      }
+
+      // Fallback
       const saved = localStorage.getItem(`repos_${username}`);
       if (saved) {
         try {
@@ -58,8 +70,8 @@ export default function DashboardPage({ username, onLogout }) {
         setRepos(INITIAL_REPOS);
         localStorage.setItem(`repos_${username}`, JSON.stringify(INITIAL_REPOS));
       }
-    }, 0);
-    return () => clearTimeout(timer);
+    };
+    loadRepos();
   }, [username]);
 
   // Save repos helper
@@ -88,29 +100,65 @@ export default function DashboardPage({ username, onLogout }) {
       return;
     }
 
-    const newRepo = {
-      id: `${trimmedName}-${Date.now()}`,
+    const payload = {
       name: trimmedName,
       description: newDesc.trim() || "No description provided.",
       framework: newFramework,
-      visibility: newVisibility,
-      updatedAt: new Date().toISOString(),
-      branch: "main"
+      visibility: newVisibility
     };
 
-    const updated = [newRepo, ...repos];
-    saveRepos(updated);
-    
-    // Reset Form & Close Modal
-    setNewName("");
-    setNewDesc("");
-    setNewFramework("nextjs");
-    setNewVisibility("private");
-    setIsModalOpen(false);
+    const createOnBackend = async () => {
+      try {
+        const response = await fetch("http://localhost:8000/api/v1/projects/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        if (response.ok) {
+          const data = await response.json();
+          const updated = [data, ...repos];
+          saveRepos(updated);
+          return true;
+        }
+      } catch (err) {
+        console.error("Failed to create on backend:", err);
+      }
+      return false;
+    };
+
+    createOnBackend().then(success => {
+      if (!success) {
+        // Fallback to local creation if backend fails
+        const newRepo = {
+          id: `${trimmedName}-${Date.now()}`,
+          ...payload,
+          updatedAt: new Date().toISOString(),
+          branch: "main"
+        };
+        const updated = [newRepo, ...repos];
+        saveRepos(updated);
+      }
+      // Reset Form & Close Modal
+      setNewName("");
+      setNewDesc("");
+      setNewFramework("nextjs");
+      setNewVisibility("private");
+      setIsModalOpen(false);
+    });
   };
 
   const handleDeleteRepo = (id) => {
     if (confirm("Are you sure you want to delete this repository?")) {
+      const deleteOnBackend = async () => {
+        try {
+          await fetch(`http://localhost:8000/api/v1/projects/${id}`, {
+            method: "DELETE"
+          });
+        } catch (err) {
+          console.error("Failed to delete on backend:", err);
+        }
+      };
+      deleteOnBackend();
       const updated = repos.filter(r => r.id !== id);
       saveRepos(updated);
     }
@@ -231,7 +279,15 @@ export default function DashboardPage({ username, onLogout }) {
           {filteredRepos.map(repo => {
             const framework = FRAMEWORKS.find(f => f.id === repo.framework) || FRAMEWORKS[0];
             return (
-              <div key={repo.id} className={styles.repoCard}>
+              <div 
+                key={repo.id} 
+                className={styles.repoCard}
+                style={{ cursor: "pointer" }}
+                onClick={(e) => {
+                  if (e.target.closest(`.${styles.deleteButton}`)) return;
+                  onOpenProject(repo);
+                }}
+              >
                 <div className={styles.repoCardHeader}>
                   <div className={styles.repoTitleArea}>
                     <h3 className={styles.repoName}>{repo.name}</h3>
