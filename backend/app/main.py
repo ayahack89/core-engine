@@ -45,7 +45,7 @@ async def on_startup():
     try:
         async with engine.begin() as conn:
             # Import models to ensure they are registered on the Base
-            from app.models.project import Project
+            from app.models.project import Project, RequirementsHistory
             from app.models.chat import ChatMessage
             await conn.run_sync(Base.metadata.create_all)
         logger.info("Database tables initialized successfully.")

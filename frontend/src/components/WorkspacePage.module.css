@@ -20,17 +20,18 @@
 .reqLayout {
   display: flex;
   height: 100vh;
-  background-color: #08080a;
-  color: #f3f4f6;
-  font-family: var(--font-geist-sans), sans-serif;
+  background-color: #000000;
+  color: #ededed;
+  font-family: var(--font-mono), "Geist Mono", "SF Mono", Menlo, Monaco, Consolas, monospace;
+  font-size: 0.825rem;
   overflow: hidden;
 }
 
 /* Left Sidebar */
 .reqSidebar {
-  width: 250px;
-  background-color: #0b0b0e;
-  border-right: 1px solid #1a1a22;
+  width: 260px;
+  background-color: #09090b;
+  border-right: 1px solid #1c1c1f;
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -38,7 +39,7 @@
 
 .reqSidebarHeader {
   padding: 1.25rem;
-  border-bottom: 1px solid #1a1a22;
+  border-bottom: 1px solid #1c1c1f;
 }
 
 .backButton {
@@ -137,7 +138,7 @@
 
 .reqSidebarFooter {
   padding: 1.25rem;
-  border-top: 1px solid #1a1a22;
+  border-top: 1px solid #1c1c1f;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
@@ -175,15 +176,16 @@
   flex: 1.1;
   display: flex;
   flex-direction: column;
-  background-color: #08080a;
-  border-right: 1px solid #1a1a22;
+  background-color: #000000;
+  border-right: 1px solid #1c1c1f;
   height: 100%;
   min-width: 320px;
 }
 
 .chatHeader {
   padding: 1.25rem;
-  border-bottom: 1px solid #1a1a22;
+  border-bottom: 1px solid #1c1c1f;
+  background-color: #09090b;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -248,17 +250,17 @@
 }
 
 .messageBubbleUser {
-  background-color: #1e1b4b;
-  color: #e0e7ff;
+  background-color: #18181b;
+  color: #ffffff;
   border-bottom-right-radius: 2px;
-  border: 1px solid #312e81;
+  border: 1px solid #27272a;
 }
 
 .messageBubbleAssistant {
-  background-color: #121216;
-  color: #e5e7eb;
+  background-color: #09090b;
+  color: #e4e4e7;
   border-bottom-left-radius: 2px;
-  border: 1px solid #1a1a22;
+  border: 1px solid #1c1c1f;
 }
 
 .messageBubbleAssistant p {
@@ -290,19 +292,19 @@
 
 .chatInputContainer {
   padding: 1.25rem;
-  border-top: 1px solid #1a1a22;
+  border-top: 1px solid #1c1c1f;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-  background-color: #0b0b0e;
+  background-color: #000000;
 }
 
 .inputWrapper {
   display: flex;
   align-items: center;
-  background-color: #121216;
-  border: 1px solid #1f1f27;
-  border-radius: 8px;
+  background-color: #09090b;
+  border: 1px solid #1c1c1f;
+  border-radius: 6px;
   padding: 0.5rem 0.75rem;
   transition: all 0.2s ease;
 }
@@ -433,17 +435,17 @@
   flex: 1.3;
   display: flex;
   flex-direction: column;
-  background-color: #08080a;
+  background-color: #000000;
   height: 100%;
 }
 
 .previewHeader {
   padding: 1.25rem;
-  border-bottom: 1px solid #1a1a22;
+  border-bottom: 1px solid #1c1c1f;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background-color: #0b0b0e;
+  background-color: #09090b;
 }
 
 .previewTitle {
@@ -1155,4 +1157,178 @@
   gap: 0.35rem;
   box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.8);
 }
+
+/* ==========================================================================
+   REQUIREMENTS ENGINE STYLING EXTENSIONS
+   ========================================================================== */
+.suggestionChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  padding: 0 0.5rem;
+}
+
+.suggestionChip {
+  background-color: #121216;
+  border: 1px solid #1f1f27;
+  color: #9ca3af;
+  padding: 0.35rem 0.65rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.suggestionChip:hover {
+  background-color: #1e1b4b;
+  border-color: #6366f1;
+  color: #a5b4fc;
+}
+
+.historySection {
+  margin-top: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  overflow: hidden;
+}
+
+.historyList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  overflow-y: auto;
+  flex-grow: 1;
+  padding-right: 0.25rem;
+}
+
+.historyList::-webkit-scrollbar {
+  width: 4px;
+}
+
+.historyList::-webkit-scrollbar-thumb {
+  background-color: #1a1a22;
+  border-radius: 2px;
+}
+
+.historyItem {
+  background-color: #121216;
+  border: 1px solid #1f1f27;
+  border-radius: 6px;
+  padding: 0.65rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+  width: 100%;
+}
+
+.historyItem:hover {
+  border-color: #6366f1;
+  background-color: #161622;
+}
+
+.historyItemActive {
+  border-color: #6366f1;
+  background-color: #1e1b4b;
+}
+
+.historyItemHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.25rem;
+}
+
+.historyVersion {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #a5b4fc;
+  background-color: #1e1b4b;
+  padding: 0.15rem 0.35rem;
+  border-radius: 4px;
+}
+
+.historyTime {
+  font-size: 0.7rem;
+  color: #6b7280;
+}
+
+.historySummary {
+  font-size: 0.75rem;
+  color: #9ca3af;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.startNewChatBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  background-color: transparent;
+  border: 1px dashed #ef4444;
+  color: #ef4444;
+  padding: 0.65rem;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  width: 100%;
+  margin-top: auto;
+}
+
+.startNewChatBtn:hover {
+  background-color: rgba(239, 68, 68, 0.08);
+  border-color: #f87171;
+  color: #f87171;
+}
+
+.historyBanner {
+  background-color: #1a1a2e;
+  border-bottom: 1px solid #2d2d5c;
+  padding: 0.75rem 1.25rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #c7d2fe;
+}
+
+.historyBannerText {
+  font-size: 0.825rem;
+  font-weight: 500;
+}
+
+.historyBannerActions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.historyBannerBtn {
+  background-color: #2e2e4f;
+  border: 1px solid #43438a;
+  color: #ffffff;
+  padding: 0.35rem 0.75rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.historyBannerBtn:hover {
+  background-color: #43438a;
+}
+
+.historyBannerBtnPrimary {
+  background-color: #10b981;
+  border-color: #10b981;
+}
+
+.historyBannerBtnPrimary:hover {
+  background-color: #059669;
+}
+
 

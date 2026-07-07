@@ -24,8 +24,26 @@ class RequirementsGenerateResponse(BaseModel):
     requirements: str
     filepath: str
 
+class RequirementsHistoryResponse(BaseModel):
+    id: int
+    project_id: str
+    version: int
+    content: str
+    summary: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
 class ChatSessionResponse(BaseModel):
     project_id: str
     messages: List[ChatMessageResponse]
     requirements_generated: bool
     requirements_content: Optional[str] = None
+    requirements_history: List[RequirementsHistoryResponse] = []
+
+class ChatResponse(BaseModel):
+    message: ChatMessageResponse
+    requirements_content: Optional[str] = None
+    requirements_history: List[RequirementsHistoryResponse] = []
+

@@ -24,6 +24,11 @@ export default function WorkspacePage({ project, username, onBack }) {
   const [tempRequirements, setTempRequirements] = useState("");
   const [isSavingDoc, setIsSavingDoc] = useState(false);
 
+  // New Requirements Extensions States
+  const [requirementsHistory, setRequirementsHistory] = useState([]);
+  const [activeHistoryVersion, setActiveHistoryVersion] = useState(null);
+  const [historicalContent, setHistoricalContent] = useState("");
+
   // Phase 2 (IDE Workspace) states
   const [files, setFiles] = useState([]);
   const [openTabs, setOpenTabs] = useState([]);
@@ -38,6 +43,13 @@ export default function WorkspacePage({ project, username, onBack }) {
 
   const reqMessagesEndRef = useRef(null);
   const ideMessagesEndRef = useRef(null);
+
+  const SUGGESTIONS = [
+    "Define User Roles & Permissions",
+    "Propose Tech Stack & Database Schema",
+    "Design Core API Endpoints",
+    "Detail Authentication & Security Flows"
+  ];
 
   // Scroll chats to bottom
   useEffect(() => {
@@ -59,6 +71,7 @@ export default function WorkspacePage({ project, username, onBack }) {
           setRequirementsGenerated(data.requirements_generated);
           setRequirementsContent(data.requirements_content || "");
           setTempRequirements(data.requirements_content || "");
+          setRequirementsHistory(data.requirements_history || []);
         }
       } catch (err) {
         console.error("Error loading requirements specs:", err);
@@ -172,7 +185,7 @@ export default function WorkspacePage({ project, username, onBack }) {
 
   // Send Requirements Gathering Message (Phase 1)
   const handleSendReqMessage = async (e) => {
-    e.preventDefault();
+    e?.preventDefault();
     const msgText = reqInputMessage.trim();
     if (!msgText || isSendingReq) return;
 
@@ -198,10 +211,25 @@ export default function WorkspacePage({ project, username, onBack }) {
 
       if (response.ok) {
         const data = await response.json();
-        setReqMessages((prev) => {
-          const filtered = prev.filter((m) => m.id !== tempUserMsg.id);
-          return [...filtered, tempUserMsg, data];
-        });
+        if (data.message) {
+          setReqMessages((prev) => {
+            const filtered = prev.filter((m) => m.id !== tempUserMsg.id);
+            return [...filtered, tempUserMsg, data.message];
+          });
+          if (data.requirements_content) {
+            setRequirementsContent(data.requirements_content);
+            setTempRequirements(data.requirements_content);
+            setRequirementsGenerated(true);
+          }
+          if (data.requirements_history) {
+            setRequirementsHistory(data.requirements_history);
+          }
+        } else {
+          setReqMessages((prev) => {
+            const filtered = prev.filter((m) => m.id !== tempUserMsg.id);
+            return [...filtered, tempUserMsg, data];
+          });
+        }
       }
     } catch (err) {
       console.error("Network error sending requirements message:", err);
@@ -210,7 +238,116 @@ export default function WorkspacePage({ project, username, onBack }) {
     }
   };
 
-  // Compile Phase 1 Interview transcript to requirements.md
+  // Triggered by clicking Suggestion Chips
+  const handleSuggestionClick = async (suggestionText) => {
+    if (isSendingReq) return;
+    setIsSendingReq(true);
+
+    const tempUserMsg = {
+      id: Date.now(),
+      project_id: project.id,
+      role: "user",
+      content: suggestionText,
+      chat_type: "requirements",
+      created_at: new Date().toISOString()
+    };
+    setReqMessages((prev) => [...prev, tempUserMsg]);
+
+    try {
+      const response = await fetch(`http://localhost:8000/api/v1/projects/${project.id}/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: suggestionText, chat_type: "requirements" })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.message) {
+          setReqMessages((prev) => {
+            const filtered = prev.filter((m) => m.id !== tempUserMsg.id);
+            return [...filtered, tempUserMsg, data.message];
+          });
+          if (data.requirements_content) {
+            setRequirementsContent(data.requirements_content);
+            setTempRequirements(data.requirements_content);
+            setRequirementsGenerated(true);
+          }
+          if (data.requirements_history) {
+            setRequirementsHistory(data.requirements_history);
+          }
+        } else {
+          setReqMessages((prev) => {
+            const filtered = prev.filter((m) => m.id !== tempUserMsg.id);
+            return [...filtered, tempUserMsg, data];
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Network error sending suggestion chat:", err);
+    } finally {
+      setIsSendingReq(false);
+    }
+  };
+
+  // Select requirements history revision to preview in right panel
+  const handleSelectHistoryVersion = (rev) => {
+    if (rev === null) {
+      setActiveHistoryVersion(null);
+      setHistoricalContent("");
+    } else {
+      setActiveHistoryVersion(rev.version);
+      setHistoricalContent(rev.content);
+    }
+  };
+
+  // Revert/Restore requirements to specific version
+  const handleRevertVersion = async (version) => {
+    if (!window.confirm(`Are you sure you want to revert requirements to Version ${version}?`)) {
+      return;
+    }
+    try {
+      const response = await fetch(`http://localhost:8000/api/v1/projects/${project.id}/requirements/revert/${version}`, {
+        method: "POST"
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setRequirementsContent(data.requirements_content);
+        setTempRequirements(data.requirements_content);
+        setRequirementsHistory(data.requirements_history);
+        setReqMessages(data.messages);
+        setActiveHistoryVersion(null);
+        setHistoricalContent("");
+      }
+    } catch (err) {
+      console.error("Error reverting version:", err);
+    }
+  };
+
+  // Reset chat and requirements.md
+  const handleResetChat = async () => {
+    if (!window.confirm("Are you sure you want to clear the chat and reset specifications to initial state? This cannot be undone.")) {
+      return;
+    }
+    try {
+      const response = await fetch(`http://localhost:8000/api/v1/projects/${project.id}/chat/reset`, {
+        method: "POST"
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setReqMessages(data.messages);
+        setRequirementsContent(data.requirements_content);
+        setTempRequirements(data.requirements_content);
+        setRequirementsHistory(data.requirements_history);
+        setRequirementsGenerated(data.requirements_generated);
+        setActiveHistoryVersion(null);
+        setHistoricalContent("");
+      }
+    } catch (err) {
+      console.error("Error resetting chat:", err);
+    }
+  };
+
+  // Compile Phase 1 Interview transcript to requirements.md manually
   const handleGenerateRequirements = async () => {
     if (isGeneratingReq) return;
     setIsGeneratingReq(true);
@@ -225,6 +362,12 @@ export default function WorkspacePage({ project, username, onBack }) {
         setRequirementsGenerated(true);
         setRequirementsContent(data.requirements);
         setTempRequirements(data.requirements);
+        // Refresh history
+        const fetchHistory = await fetch(`http://localhost:8000/api/v1/projects/${project.id}/chat?chat_type=requirements`);
+        if (fetchHistory.ok) {
+          const resJson = await fetchHistory.json();
+          setRequirementsHistory(resJson.requirements_history || []);
+        }
       } else {
         alert("Conversation history is required before compiling specifications.");
       }
@@ -250,6 +393,12 @@ export default function WorkspacePage({ project, username, onBack }) {
       if (response.ok) {
         setRequirementsContent(tempRequirements);
         setEditMode(false);
+        // Refresh requirements history after manual save
+        const historyResponse = await fetch(`http://localhost:8000/api/v1/projects/${project.id}/chat?chat_type=requirements`);
+        if (historyResponse.ok) {
+          const data = await historyResponse.json();
+          setRequirementsHistory(data.requirements_history || []);
+        }
       }
     } catch (err) {
       console.error("Error saving specifications changes:", err);
@@ -257,6 +406,7 @@ export default function WorkspacePage({ project, username, onBack }) {
       setIsSavingDoc(false);
     }
   };
+
 
   // Trigger browser download for requirements.md
   const handleDownloadRequirements = () => {
@@ -524,7 +674,7 @@ export default function WorkspacePage({ project, username, onBack }) {
 
           <div className={styles.reqSidebarContent}>
             <div className={styles.projectInfo}>
-              <h2>{project.name}</h2>
+              <h2>{project.name.toUpperCase()}</h2>
               <div className={styles.projectMeta}>
                 <span className={styles.metaBadge}>{project.framework}</span>
                 <span className={styles.metaBadge}>{project.visibility}</span>
@@ -532,25 +682,63 @@ export default function WorkspacePage({ project, username, onBack }) {
             </div>
 
             <div>
-              <h4 className={styles.sectionTitle}>Drafts</h4>
+              <h4 className={styles.sectionTitle}>File Explorer</h4>
               <div className={styles.fileList}>
                 <button 
-                  className={`${styles.fileItem} ${requirementsGenerated ? styles.fileItemActive : ""}`}
-                  onClick={handleLaunchIDE}
+                  className={`${styles.fileItem} ${activeHistoryVersion === null ? styles.fileItemActive : ""}`}
+                  onClick={() => handleSelectHistoryVersion(null)}
                   style={{ cursor: "pointer" }}
-                  title="Click to directly launch Cursor IDE workspace"
                 >
-                  📄 requirements.md
+                  📄 requirements.md (Live)
                 </button>
               </div>
             </div>
+
+            <div className={styles.historySection}>
+              <h4 className={styles.sectionTitle}>Change History</h4>
+              <div className={styles.historyList}>
+                {requirementsHistory.length === 0 ? (
+                  <div style={{ fontSize: "0.75rem", color: "#52525b", padding: "0.5rem" }}>
+                    No revisions yet.
+                  </div>
+                ) : (
+                  requirementsHistory.map((rev) => (
+                    <button
+                      key={rev.id}
+                      className={`${styles.historyItem} ${activeHistoryVersion === rev.version ? styles.historyItemActive : ""}`}
+                      onClick={() => handleSelectHistoryVersion(rev)}
+                    >
+                      <div className={styles.historyItemHeader}>
+                        <span className={styles.historyVersion}>v{rev.version}</span>
+                        <span className={styles.historyTime}>
+                          {new Date(rev.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                      <div className={styles.historySummary} title={rev.summary || `Version ${rev.version}`}>
+                        {rev.summary || `Update version ${rev.version}`}
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+            
+            <button 
+              className={styles.startNewChatBtn}
+              onClick={handleResetChat}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+              </svg>
+              Start a New Chat
+            </button>
           </div>
 
           <div className={styles.reqSidebarFooter}>
             <button 
               className={styles.downloadButton} 
               onClick={handleDownloadRequirements}
-              disabled={!requirementsGenerated}
+              disabled={!requirementsContent}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
@@ -565,10 +753,10 @@ export default function WorkspacePage({ project, username, onBack }) {
         {/* Center Panel (Requirement Gathering Chat) */}
         <div className={styles.chatPane}>
           <div className={styles.chatHeader}>
-            <h3>Phase 1: Product Analyst Chat</h3>
+            <h3>Phase 1: Query Optimizer Engine</h3>
             <div className={styles.aiStatus}>
               <span className={styles.aiStatusDot} />
-              <span>Interview Mode</span>
+              <span>AI Analyst Active</span>
             </div>
           </div>
 
@@ -576,7 +764,7 @@ export default function WorkspacePage({ project, username, onBack }) {
             {reqMessages.length === 0 ? (
               <div className={styles.emptyPreview}>
                 <h4>Product Analyst Interview</h4>
-                <p>Discuss your application goal, target users, and key features. Click the send message input to start.</p>
+                <p>Discuss your application goal, target users, and key features to optimize specifications.</p>
               </div>
             ) : (
               reqMessages.map((msg) => (
@@ -602,28 +790,25 @@ export default function WorkspacePage({ project, username, onBack }) {
           </div>
 
           <div className={styles.chatInputContainer}>
-            {requirementsGenerated && (
-              <div className={styles.launchWorkspaceBanner}>
-                <div className={styles.launchWorkspaceTitle}>✅ Phase 1: Requirements Compiled</div>
-                <div className={styles.launchWorkspaceDesc}>
-                  Your system requirements specifications are compiled successfully inside requirements.md. 
-                  Launch the developer workspace to begin writing codebase code.
-                </div>
-                <button className={styles.launchWorkspaceBtn} onClick={handleLaunchIDE}>
-                  Launch Cursor IDE Workspace →
-                </button>
+            {activeHistoryVersion === null && (
+              <div className={styles.suggestionChips}>
+                {SUGGESTIONS.map((s, idx) => (
+                  <button
+                    key={idx}
+                    className={styles.suggestionChip}
+                    onClick={() => handleSuggestionClick(s)}
+                    disabled={isSendingReq}
+                  >
+                    {s}
+                  </button>
+                ))}
               </div>
             )}
 
-            {reqMessages.length > 0 && !requirementsGenerated && (
-              <div className={styles.generateBanner}>
-                <span className={styles.generateBannerText}>Compile gathered requirements?</span>
-                <button 
-                  className={styles.generateButton}
-                  onClick={handleGenerateRequirements}
-                  disabled={isGeneratingReq}
-                >
-                  {isGeneratingReq ? "Generating..." : "Generate specs"}
+            {requirementsContent && (
+              <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.5rem" }}>
+                <button className={styles.launchWorkspaceBtn} onClick={handleLaunchIDE} style={{ padding: "0.45rem", fontSize: "0.75rem", boxShadow: "none" }}>
+                  Launch Cursor IDE Workspace →
                 </button>
               </div>
             )}
@@ -649,9 +834,33 @@ export default function WorkspacePage({ project, username, onBack }) {
 
         {/* Right Panel (Markdown Viewer / Editor) */}
         <div className={styles.previewPane}>
+          {activeHistoryVersion !== null && (
+            <div className={styles.historyBanner}>
+              <span className={styles.historyBannerText}>
+                ⚠️ Viewing Version {activeHistoryVersion} (Historical Archive)
+              </span>
+              <div className={styles.historyBannerActions}>
+                <button
+                  className={styles.historyBannerBtn}
+                  onClick={() => handleSelectHistoryVersion(null)}
+                >
+                  Back to Live
+                </button>
+                <button
+                  className={`${styles.historyBannerBtn} ${styles.historyBannerBtnPrimary}`}
+                  onClick={() => handleRevertVersion(activeHistoryVersion)}
+                >
+                  Restore this Version
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className={styles.previewHeader}>
-            <div className={styles.previewTitle}>📄 requirements.md</div>
-            {requirementsGenerated && (
+            <div className={styles.previewTitle}>
+              📄 requirements.md {activeHistoryVersion !== null ? `(v${activeHistoryVersion})` : "(Live)"}
+            </div>
+            {activeHistoryVersion === null && requirementsContent && (
               <div className={styles.editorActions}>
                 {editMode ? (
                   <>
@@ -673,11 +882,6 @@ export default function WorkspacePage({ project, username, onBack }) {
                 <span className={styles.inlineSpinner} style={{ width: "32px", height: "32px", marginBottom: "1rem" }} />
                 <h4>Compiling requirements...</h4>
               </div>
-            ) : !requirementsGenerated ? (
-              <div className={styles.emptyPreview}>
-                <h4>No Document Compiled</h4>
-                <p>Chat with the Product Analyst. Once you have alignment, click "Generate specs" below the chat pane.</p>
-              </div>
             ) : editMode ? (
               <textarea
                 className={styles.markdownEditor}
@@ -688,7 +892,7 @@ export default function WorkspacePage({ project, username, onBack }) {
             ) : (
               <div className={styles.previewContent}>
                 <div className={styles.markdownBody}>
-                  {renderSpecsMarkdown(requirementsContent)}
+                  {renderSpecsMarkdown(activeHistoryVersion !== null ? historicalContent : requirementsContent)}
                 </div>
               </div>
             )}

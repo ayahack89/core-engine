@@ -1,21 +1,26 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 import os
+import logging
 
 from app.database.session import get_db
 from app.models.chat import ChatMessage
-from app.models.project import Project
+from app.models.project import Project, RequirementsHistory
 from app.schemas.chat import (
     ChatMessageCreate, 
     ChatMessageResponse, 
     ChatSessionResponse,
-    RequirementsGenerateResponse
+    RequirementsGenerateResponse,
+    ChatResponse,
+    RequirementsHistoryResponse
 )
 from app.services.ai_service import AIService
 from app.services.project_service import ProjectService
+from app.core.config import settings
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 @router.get("/{project_id}/chat", response_model=ChatSessionResponse)
@@ -24,7 +29,7 @@ async def get_chat_session(
     chat_type: str = "requirements", 
     db: AsyncSession = Depends(get_db)
 ):
-    """Fetch the chat history (by type) and current requirements status for a project."""
+    """Fetch the chat history (by type), current requirements status, and requirements history for a project."""
     project = await ProjectService.get_project(db, project_id)
     if not project:
         raise HTTPException(
@@ -41,25 +46,81 @@ async def get_chat_session(
     )
     messages = result.scalars().all()
     
-    # Read requirements file if generated
+    # Read requirements file
     requirements_content = None
-    if project.status == "completed":
-        requirements_content = await ProjectService.read_requirements_file(project_id)
+    if chat_type == "requirements" or project.status == "completed":
+        try:
+            requirements_content = await ProjectService.read_requirements_file(project_id)
+        except Exception:
+            requirements_content = None
+            
+    # Get requirements history
+    result_history = await db.execute(
+        select(RequirementsHistory)
+        .where(RequirementsHistory.project_id == project_id)
+        .order_by(RequirementsHistory.version.desc())
+    )
+    requirements_history = result_history.scalars().all()
+    
+    # Bootstrap default requirements file if empty and in requirements mode
+    if chat_type == "requirements" and not requirements_content:
+        requirements_content = f"# Project Specification: {project.name}\n\nUse the chat panel in the middle to discuss requirements. The specifications will compile here in real-time."
+        await ProjectService.save_requirements_file(project_id, requirements_content)
+        
+        # Seed initial version in history if empty
+        if not requirements_history:
+            initial_history = RequirementsHistory(
+                project_id=project_id,
+                version=1,
+                content=requirements_content,
+                summary="Initial setup"
+            )
+            db.add(initial_history)
+            await db.commit()
+            
+            # Re-fetch history
+            result_history = await db.execute(
+                select(RequirementsHistory)
+                .where(RequirementsHistory.project_id == project_id)
+                .order_by(RequirementsHistory.version.desc())
+            )
+            requirements_history = result_history.scalars().all()
+
+    # Seed initial greeting if messages list is empty
+    if chat_type == "requirements" and not messages:
+        initial_msg = ChatMessage(
+            project_id=project_id,
+            role="assistant",
+            content=f"Hello! I am your Product Analyst and User Query Optimizer Engine. Let's design your new project: {project.name}. What is the core idea of your project and who are its target users?",
+            chat_type="requirements"
+        )
+        db.add(initial_msg)
+        await db.commit()
+        
+        # Re-fetch messages
+        result = await db.execute(
+            select(ChatMessage)
+            .where(ChatMessage.project_id == project_id)
+            .where(ChatMessage.chat_type == chat_type)
+            .order_by(ChatMessage.created_at.asc())
+        )
+        messages = result.scalars().all()
         
     return ChatSessionResponse(
         project_id=project_id,
         messages=messages,
-        requirements_generated=(project.status == "completed"),
-        requirements_content=requirements_content
+        requirements_generated=True,
+        requirements_content=requirements_content,
+        requirements_history=requirements_history
     )
 
-@router.post("/{project_id}/chat", response_model=ChatMessageResponse)
+@router.post("/{project_id}/chat", response_model=ChatResponse)
 async def send_chat_message(
     project_id: str, 
     message_in: ChatMessageCreate, 
     db: AsyncSession = Depends(get_db)
 ):
-    """Post a user message, trigger the appropriate Gemini assistant (analyst or coder), and store in DB."""
+    """Post a user message, trigger the appropriate OpenRouter assistant, update requirements in real-time, and store in DB."""
     project = await ProjectService.get_project(db, project_id)
     if not project:
         raise HTTPException(
@@ -77,7 +138,7 @@ async def send_chat_message(
     db.add(user_msg)
     await db.commit()
     
-    # 2. Retrieve chat history of the same chat_type to send to Gemini
+    # 2. Retrieve chat history of the same chat_type to send to OpenRouter
     result = await db.execute(
         select(ChatMessage)
         .where(ChatMessage.project_id == project_id)
@@ -90,13 +151,61 @@ async def send_chat_message(
         for msg in history_models
     ]
     
+    requirements_content = None
+    requirements_history_list = []
+    
     # 3. Call AIService depending on chat_type
     try:
         if message_in.chat_type == "coder":
             reply_text = await AIService.get_coder_reply(chat_history)
         else:
-            reply_text = await AIService.get_chat_reply(chat_history)
+            # For requirements gathering, read the current requirements.md from workspace
+            try:
+                current_reqs = await ProjectService.read_requirements_file(project_id)
+            except Exception:
+                current_reqs = ""
+            
+            ai_data = await AIService.get_chat_reply(chat_history, current_reqs)
+            reply_text = ai_data["chat_reply"]
+            new_reqs = ai_data["requirements"]
+            
+            # If updated requirements are returned and are different from current, save them
+            if new_reqs and new_reqs.strip() != current_reqs.strip():
+                await ProjectService.save_requirements_file(project_id, new_reqs)
+                requirements_content = new_reqs
+                
+                # Fetch max version to increment
+                result_max = await db.execute(
+                    select(RequirementsHistory.version)
+                    .where(RequirementsHistory.project_id == project_id)
+                    .order_by(RequirementsHistory.version.desc())
+                    .limit(1)
+                )
+                max_ver = result_max.scalar_one_or_none() or 0
+                next_ver = max_ver + 1
+                
+                # Add revision record
+                new_rev = RequirementsHistory(
+                    project_id=project_id,
+                    version=next_ver,
+                    content=new_reqs,
+                    summary=f"Refined after chat: '{message_in.content[:40]}...'"
+                )
+                db.add(new_rev)
+                await db.commit()
+            else:
+                requirements_content = current_reqs
+                
+            # Get updated requirements history list
+            result_history = await db.execute(
+                select(RequirementsHistory)
+                .where(RequirementsHistory.project_id == project_id)
+                .order_by(RequirementsHistory.version.desc())
+            )
+            requirements_history_list = result_history.scalars().all()
+            
     except Exception as e:
+        logger.error(f"Failed to generate AI reply: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate AI reply: {str(e)}"
@@ -113,11 +222,92 @@ async def send_chat_message(
     await db.commit()
     await db.refresh(assistant_msg)
     
-    return assistant_msg
+    return ChatResponse(
+        message=assistant_msg,
+        requirements_content=requirements_content,
+        requirements_history=requirements_history_list
+    )
 
-@router.post("/{project_id}/requirements/generate", response_model=RequirementsGenerateResponse)
-async def generate_requirements_document(project_id: str, db: AsyncSession = Depends(get_db)):
-    """Generate requirements.md in the project folder from Phase 1 requirements chat."""
+@router.post("/{project_id}/requirements/revert/{version}", response_model=ChatSessionResponse)
+async def revert_requirements_version(
+    project_id: str,
+    version: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """Revert the requirements.md content to a specific historical version."""
+    project = await ProjectService.get_project(db, project_id)
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Project with ID {project_id} not found"
+        )
+    
+    # Fetch historical requirements version
+    result = await db.execute(
+        select(RequirementsHistory)
+        .where(RequirementsHistory.project_id == project_id)
+        .where(RequirementsHistory.version == version)
+    )
+    historical = result.scalar_one_or_none()
+    if not historical:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Version {version} of requirements not found"
+        )
+        
+    # Re-save on disk
+    await ProjectService.save_requirements_file(project_id, historical.content)
+    
+    # Add a new version in history detailing the revert
+    result_max_version = await db.execute(
+        select(RequirementsHistory.version)
+        .where(RequirementsHistory.project_id == project_id)
+        .order_by(RequirementsHistory.version.desc())
+        .limit(1)
+    )
+    max_version = result_max_version.scalar_one_or_none() or 0
+    next_version = max_version + 1
+    
+    new_revision = RequirementsHistory(
+        project_id=project_id,
+        version=next_version,
+        content=historical.content,
+        summary=f"Reverted to Version {version}",
+    )
+    db.add(new_revision)
+    await db.commit()
+    
+    # Get updated history list
+    result_history = await db.execute(
+        select(RequirementsHistory)
+        .where(RequirementsHistory.project_id == project_id)
+        .order_by(RequirementsHistory.version.desc())
+    )
+    history_models = result_history.scalars().all()
+    
+    # Get chat history
+    result_chat = await db.execute(
+        select(ChatMessage)
+        .where(ChatMessage.project_id == project_id)
+        .where(ChatMessage.chat_type == "requirements")
+        .order_by(ChatMessage.created_at.asc())
+    )
+    messages = result_chat.scalars().all()
+    
+    return ChatSessionResponse(
+        project_id=project_id,
+        messages=messages,
+        requirements_generated=True,
+        requirements_content=historical.content,
+        requirements_history=history_models
+    )
+
+@router.post("/{project_id}/chat/reset", response_model=ChatSessionResponse)
+async def reset_requirements_chat(
+    project_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Reset requirements gathering chat messages and restore requirements.md to initial setup."""
     project = await ProjectService.get_project(db, project_id)
     if not project:
         raise HTTPException(
@@ -125,7 +315,80 @@ async def generate_requirements_document(project_id: str, db: AsyncSession = Dep
             detail=f"Project with ID {project_id} not found"
         )
         
-    # Fetch Phase 1 chat history (requirements gathering only)
+    # Delete all requirements chat messages for this project
+    await db.execute(
+        delete(ChatMessage)
+        .where(ChatMessage.project_id == project_id)
+        .where(ChatMessage.chat_type == "requirements")
+    )
+    
+    # Set default text
+    default_text = f"# Project Specification: {project.name}\n\nUse the chat panel in the middle to discuss requirements. The specifications will compile here in real-time."
+    await ProjectService.save_requirements_file(project_id, default_text)
+    
+    # Create a fresh version in requirements history
+    result_max_version = await db.execute(
+        select(RequirementsHistory.version)
+        .where(RequirementsHistory.project_id == project_id)
+        .order_by(RequirementsHistory.version.desc())
+        .limit(1)
+    )
+    max_version = result_max_version.scalar_one_or_none() or 0
+    next_version = max_version + 1
+    
+    new_revision = RequirementsHistory(
+        project_id=project_id,
+        version=next_version,
+        content=default_text,
+        summary="Reset project requirements to initial state"
+    )
+    db.add(new_revision)
+    
+    # Add a fresh initial assistant greeting
+    initial_msg = ChatMessage(
+        project_id=project_id,
+        role="assistant",
+        content=f"Hello! I am your Product Analyst and User Query Optimizer Engine. Let's design your new project: {project.name}. What is the core idea of your project and who are its target users?",
+        chat_type="requirements"
+    )
+    db.add(initial_msg)
+    await db.commit()
+    
+    # Fetch updated history list
+    result_history = await db.execute(
+        select(RequirementsHistory)
+        .where(RequirementsHistory.project_id == project_id)
+        .order_by(RequirementsHistory.version.desc())
+    )
+    history_models = result_history.scalars().all()
+    
+    # Fetch updated messages list
+    result_chat = await db.execute(
+        select(ChatMessage)
+        .where(ChatMessage.project_id == project_id)
+        .where(ChatMessage.chat_type == "requirements")
+        .order_by(ChatMessage.created_at.asc())
+    )
+    messages = result_chat.scalars().all()
+    
+    return ChatSessionResponse(
+        project_id=project_id,
+        messages=messages,
+        requirements_generated=True,
+        requirements_content=default_text,
+        requirements_history=history_models
+    )
+
+@router.post("/{project_id}/requirements/generate", response_model=RequirementsGenerateResponse)
+async def generate_requirements_document(project_id: str, db: AsyncSession = Depends(get_db)):
+    """Generate requirements.md in the project folder from Phase 1 requirements chat manually."""
+    project = await ProjectService.get_project(db, project_id)
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Project with ID {project_id} not found"
+        )
+        
     result = await db.execute(
         select(ChatMessage)
         .where(ChatMessage.project_id == project_id)
@@ -144,7 +407,6 @@ async def generate_requirements_document(project_id: str, db: AsyncSession = Dep
         for msg in history_models
     ]
     
-    # Generate requirements using AI
     try:
         requirements_content = await AIService.generate_requirements(chat_history)
     except Exception as e:
@@ -153,11 +415,27 @@ async def generate_requirements_document(project_id: str, db: AsyncSession = Dep
             detail=f"Failed to generate requirements document: {str(e)}"
         )
         
-    # Save file on disk
     filepath = await ProjectService.save_requirements_file(project_id, requirements_content)
-    
-    # Update project status
     await ProjectService.update_project_status(db, project_id, "completed")
+    
+    # Add a history version
+    result_max_version = await db.execute(
+        select(RequirementsHistory.version)
+        .where(RequirementsHistory.project_id == project_id)
+        .order_by(RequirementsHistory.version.desc())
+        .limit(1)
+    )
+    max_version = result_max_version.scalar_one_or_none() or 0
+    next_version = max_version + 1
+    
+    new_revision = RequirementsHistory(
+        project_id=project_id,
+        version=next_version,
+        content=requirements_content,
+        summary="Compiled full specification document"
+    )
+    db.add(new_revision)
+    await db.commit()
     
     return RequirementsGenerateResponse(
         success=True,
@@ -177,6 +455,26 @@ async def save_requirements_document(project_id: str, content: dict, db: AsyncSe
         
     md_content = content.get("content", "")
     await ProjectService.save_requirements_file(project_id, md_content)
+    
+    # Add a history version
+    result_max_version = await db.execute(
+        select(RequirementsHistory.version)
+        .where(RequirementsHistory.project_id == project_id)
+        .order_by(RequirementsHistory.version.desc())
+        .limit(1)
+    )
+    max_version = result_max_version.scalar_one_or_none() or 0
+    next_version = max_version + 1
+    
+    new_revision = RequirementsHistory(
+        project_id=project_id,
+        version=next_version,
+        content=md_content,
+        summary="Manual edit in workspace"
+    )
+    db.add(new_revision)
+    await db.commit()
+    
     return {"success": True}
 
 @router.get("/{project_id}/requirements/download")
