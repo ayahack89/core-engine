@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 import os
 import logging
+import json
 
-from app.database.session import get_db
+from app.database.session import get_db, async_session_maker
 from app.models.chat import ChatMessage
 from app.models.project import Project, RequirementsHistory
 from app.schemas.chat import (
@@ -227,6 +228,128 @@ async def send_chat_message(
         requirements_content=requirements_content,
         requirements_history=requirements_history_list
     )
+
+@router.post("/{project_id}/chat/stream")
+async def stream_chat_message(
+    project_id: str,
+    message_in: ChatMessageCreate,
+    db: AsyncSession = Depends(get_db)
+):
+    """Post a user message, stream OpenRouter reply, update requirements in real-time."""
+    project = await ProjectService.get_project(db, project_id)
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Project with ID {project_id} not found"
+        )
+        
+    # 1. Save user message
+    user_msg = ChatMessage(
+        project_id=project_id,
+        role="user",
+        content=message_in.content,
+        chat_type=message_in.chat_type
+    )
+    db.add(user_msg)
+    await db.commit()
+    
+    # 2. Retrieve history
+    result = await db.execute(
+        select(ChatMessage)
+        .where(ChatMessage.project_id == project_id)
+        .where(ChatMessage.chat_type == message_in.chat_type)
+        .order_by(ChatMessage.created_at.asc())
+    )
+    history_models = result.scalars().all()
+    chat_history = [
+        {"role": msg.role, "content": msg.content}
+        for msg in history_models
+    ]
+    
+    try:
+        current_reqs = await ProjectService.read_requirements_file(project_id)
+    except Exception:
+        current_reqs = ""
+        
+    async def event_generator():
+        full_response = ""
+        try:
+            if message_in.chat_type == "coder":
+                async for chunk in AIService.stream_coder_reply(chat_history, model=message_in.model):
+                    yield chunk
+                    if chunk.startswith("data: "):
+                        try:
+                            chunk_json = json.loads(chunk[6:].strip())
+                            if "content" in chunk_json:
+                                full_response += chunk_json["content"]
+                        except Exception:
+                            pass
+            else:
+                async for chunk in AIService.stream_chat_reply(chat_history, current_reqs, model=message_in.model):
+                    yield chunk
+                    if chunk.startswith("data: "):
+                        try:
+                            chunk_json = json.loads(chunk[6:].strip())
+                            if "content" in chunk_json:
+                                full_response += chunk_json["content"]
+                        except Exception:
+                            pass
+            
+            # Post-processing after complete stream is received
+            if full_response:
+                async with async_session_maker() as session:
+                    if message_in.chat_type == "coder":
+                        assistant_msg = ChatMessage(
+                            project_id=project_id,
+                            role="assistant",
+                            content=full_response,
+                            chat_type="coder"
+                        )
+                        session.add(assistant_msg)
+                        await session.commit()
+                    else:
+                        parsed = AIService.parse_ai_response(full_response)
+                        reply_text = parsed["chat_reply"]
+                        new_reqs = parsed["requirements"]
+                        
+                        assistant_msg = ChatMessage(
+                            project_id=project_id,
+                            role="assistant",
+                            content=reply_text,
+                            chat_type="requirements"
+                        )
+                        session.add(assistant_msg)
+                        
+                        if new_reqs and new_reqs.strip() != current_reqs.strip():
+                            await ProjectService.save_requirements_file(project_id, new_reqs)
+                            
+                            # Fetch max version to increment
+                            result_max = await session.execute(
+                                select(RequirementsHistory.version)
+                                .where(RequirementsHistory.project_id == project_id)
+                                .order_by(RequirementsHistory.version.desc())
+                                .limit(1)
+                            )
+                            max_ver = result_max.scalar_one_or_none() or 0
+                            next_ver = max_ver + 1
+                            
+                            new_rev = RequirementsHistory(
+                                project_id=project_id,
+                                version=next_ver,
+                                content=new_reqs,
+                                summary=f"Refined after chat: '{message_in.content[:40]}...'"
+                            )
+                            session.add(new_rev)
+                            
+                        await session.commit()
+            
+            # Yield done packet to signal database operations are fully committed
+            yield f"data: {json.dumps({'done': True})}\n\n"
+        except Exception as e:
+            logger.error(f"Error in stream event generator: {e}", exc_info=True)
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+            
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @router.post("/{project_id}/requirements/revert/{version}", response_model=ChatSessionResponse)
 async def revert_requirements_version(
@@ -499,3 +622,21 @@ async def download_requirements_document(project_id: str, db: AsyncSession = Dep
         media_type="text/markdown", 
         filename="requirements.md"
     )
+
+@router.get("/{project_id}/requirements/live")
+async def get_live_requirements(
+    project_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Retrieve the current live requirements.md content for a project."""
+    project = await ProjectService.get_project(db, project_id)
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Project with ID {project_id} not found"
+        )
+    try:
+        content = await ProjectService.read_requirements_file(project_id)
+    except Exception:
+        content = ""
+    return {"project_id": project_id, "content": content}

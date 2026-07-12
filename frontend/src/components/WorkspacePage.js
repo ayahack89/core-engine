@@ -3,9 +3,328 @@
 import { useState, useEffect, useRef } from "react";
 import styles from "./WorkspacePage.module.css";
 
+// Markdown block parser
+function parseMarkdown(text) {
+  if (!text) return [];
+  const lines = text.split('\n');
+  const blocks = [];
+  
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    
+    // 1. Code block
+    if (line.trim().startsWith('```')) {
+      const match = line.trim().match(/^```(\w+)?/);
+      const language = match ? match[1] : '';
+      let codeLines = [];
+      i++;
+      while (i < lines.length && !lines[i].trim().startsWith('```')) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      blocks.push({
+        type: 'code',
+        language: language || 'text',
+        content: codeLines.join('\n')
+      });
+      i++; // skip closing ```
+      continue;
+    }
+    
+    // 2. Table
+    if (line.trim().startsWith('|')) {
+      let tableLines = [];
+      while (i < lines.length && lines[i].trim().startsWith('|')) {
+        tableLines.push(lines[i]);
+        i++;
+      }
+      if (tableLines.length >= 2) {
+        const headers = tableLines[0].split('|').map(s => s.trim()).filter((s, idx, arr) => idx > 0 && idx < arr.length - 1);
+        const rows = tableLines.slice(2).map(rowLine => {
+          return rowLine.split('|').map(s => s.trim()).filter((s, idx, arr) => idx > 0 && idx < arr.length - 1);
+        });
+        blocks.push({
+          type: 'table',
+          headers,
+          rows
+        });
+      } else {
+        tableLines.forEach(l => {
+          blocks.push({ type: 'paragraph', content: l });
+        });
+      }
+      continue;
+    }
+    
+    // 3. Blockquote
+    if (line.startsWith('> ')) {
+      let bqLines = [];
+      while (i < lines.length && lines[i].startsWith('> ')) {
+        bqLines.push(lines[i].substring(2));
+        i++;
+      }
+      blocks.push({
+        type: 'blockquote',
+        content: bqLines.join('\n')
+      });
+      continue;
+    }
+    
+    // 4. Headers
+    if (line.startsWith('# ')) {
+      blocks.push({ type: 'header', level: 1, content: line.substring(2) });
+      i++;
+      continue;
+    }
+    if (line.startsWith('## ')) {
+      blocks.push({ type: 'header', level: 2, content: line.substring(3) });
+      i++;
+      continue;
+    }
+    if (line.startsWith('### ')) {
+      blocks.push({ type: 'header', level: 3, content: line.substring(4) });
+      i++;
+      continue;
+    }
+    if (line.startsWith('#### ')) {
+      blocks.push({ type: 'header', level: 4, content: line.substring(5) });
+      i++;
+      continue;
+    }
+    
+    // 5. Lists (unordered and ordered)
+    const listMatch = line.match(/^(\s*)([-*]|\d+\.)\s(.*)/);
+    if (listMatch) {
+      const items = [];
+      while (i < lines.length) {
+        const l = lines[i];
+        const match = l.match(/^(\s*)([-*]|\d+\.)\s(.*)/);
+        if (!match) break;
+        
+        const isTask = match[3].startsWith('[ ]') || match[3].startsWith('[x]') || match[3].startsWith('[X]');
+        const checked = match[3].startsWith('[x]') || match[3].startsWith('[X]');
+        const textContent = isTask ? match[3].substring(3).trim() : match[3];
+        
+        items.push({
+          indent: match[1].length,
+          marker: match[2],
+          content: textContent,
+          isTask,
+          checked
+        });
+        i++;
+      }
+      blocks.push({
+        type: 'list',
+        items
+      });
+      continue;
+    }
+    
+    // 6. Empty line
+    if (!line.trim()) {
+      blocks.push({ type: 'empty' });
+      i++;
+      continue;
+    }
+    
+    // 7. Paragraph
+    blocks.push({ type: 'paragraph', content: line });
+    i++;
+  }
+  
+  return blocks;
+}
+
+// Custom code block with copy button
+function CodeBlock({ language, content }) {
+  const [copied, setCopied] = useState(false);
+  
+  const handleCopy = () => {
+    navigator.clipboard.writeText(content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  
+  return (
+    <div style={{
+      border: '1px solid #27272a',
+      borderRadius: '6px',
+      overflow: 'hidden',
+      margin: '0.75rem 0',
+      backgroundColor: '#09090b',
+      fontFamily: 'monospace'
+    }}>
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '0.35rem 0.75rem',
+        backgroundColor: '#18181b',
+        borderBottom: '1px solid #27272a',
+        fontSize: '0.7rem',
+        color: '#a1a1aa'
+      }}>
+        <span>{language.toUpperCase()}</span>
+        <button 
+          onClick={handleCopy}
+          style={{
+            background: 'none',
+            border: 'none',
+            color: copied ? '#10b981' : '#a1a1aa',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '4px',
+            fontSize: '0.7rem'
+          }}
+        >
+          {copied ? (
+            <>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+              Copied!
+            </>
+          ) : (
+            <>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+              Copy
+            </>
+          )}
+        </button>
+      </div>
+      <pre style={{
+        margin: 0,
+        padding: '1rem',
+        overflowX: 'auto',
+        fontSize: '0.85rem',
+        lineHeight: '1.5',
+        color: '#e4e4e7',
+        backgroundColor: '#09090b'
+      }}>
+        <code>{content}</code>
+      </pre>
+    </div>
+  );
+}
+
+// React Markdown component
+function Markdown({ content }) {
+  const [isClient, setIsClient] = useState(false);
+  
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
+
+  if (!content) return null;
+  const blocks = parseMarkdown(content);
+  
+  const renderInline = (str) => {
+    if (!str) return '';
+    let formatted = str
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+    
+    formatted = formatted.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+    formatted = formatted.replace(/__(.*?)__/g, "<strong>$1</strong>");
+    formatted = formatted.replace(/\*(.*?)\*/g, "<em>$1</em>");
+    formatted = formatted.replace(/_(.*?)_/g, "<em>$1</em>");
+    formatted = formatted.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" style="color: #818cf8; text-decoration: underline;">$1</a>');
+    formatted = formatted.replace(/`(.*?)`/g, '<code style="background-color: #18181b; color: #fb7185; padding: 0.15rem 0.35rem; border-radius: 4px; font-family: monospace; font-size: 0.9em;">$1</code>');
+    
+    return <span dangerouslySetInnerHTML={{ __html: formatted }} />;
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+      {blocks.map((block, idx) => {
+        switch (block.type) {
+          case 'header':
+            if (block.level === 1) return <h1 key={idx} style={{ fontSize: '1.65rem', fontWeight: '700', color: '#ffffff', marginTop: '1.75rem', marginBottom: '0.85rem', borderBottom: '1px solid #27272a', paddingBottom: '0.35rem' }}>{renderInline(block.content)}</h1>;
+            if (block.level === 2) return <h2 key={idx} style={{ fontSize: '1.35rem', fontWeight: '600', color: '#ffffff', marginTop: '1.4rem', marginBottom: '0.7rem' }}>{renderInline(block.content)}</h2>;
+            if (block.level === 3) return <h3 key={idx} style={{ fontSize: '1.15rem', fontWeight: '600', color: '#ffffff', marginTop: '1.2rem', marginBottom: '0.6rem' }}>{renderInline(block.content)}</h3>;
+            return <h4 key={idx} style={{ fontSize: '1.025rem', fontWeight: '600', color: '#ffffff', marginTop: '1rem', marginBottom: '0.5rem' }}>{renderInline(block.content)}</h4>;
+            
+          case 'code':
+            return <CodeBlock key={idx} language={block.language} content={block.content} />;
+            
+          case 'table':
+            return (
+              <div key={idx} style={{ overflowX: 'auto', margin: '1.25rem 0' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem', color: '#ededed' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '2px solid #3f3f46', backgroundColor: '#18181b' }}>
+                      {block.headers.map((h, hidx) => (
+                        <th key={hidx} style={{ padding: '0.6rem 0.8rem', textAlign: 'left', fontWeight: '600', border: '1px solid #27272a' }}>{renderInline(h)}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {block.rows.map((row, ridx) => (
+                      <tr key={ridx} style={{ borderBottom: '1px solid #27272a', backgroundColor: ridx % 2 === 0 ? '#0c0c0f' : '#141417' }}>
+                        {row.map((cell, cidx) => (
+                          <td key={cidx} style={{ padding: '0.6rem 0.8rem', border: '1px solid #27272a' }}>{renderInline(cell)}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            );
+            
+          case 'blockquote':
+            return (
+              <blockquote key={idx} style={{ borderLeft: '4px solid #6366f1', paddingLeft: '1rem', color: '#a1a1aa', margin: '1rem 0', fontStyle: 'italic' }}>
+                {renderInline(block.content)}
+              </blockquote>
+            );
+            
+          case 'list':
+            return (
+              <ul key={idx} style={{ paddingLeft: '1.25rem', margin: '0.65rem 0', listStyleType: 'none' }}>
+                {block.items.map((item, iidx) => {
+                  const paddingLeft = `${item.indent * 12}px`;
+                  if (item.isTask) {
+                    return (
+                      <li key={iidx} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', paddingLeft, marginBottom: '0.35rem' }}>
+                        <input type="checkbox" checked={item.checked} readOnly style={{ accentColor: '#6366f1', cursor: 'default' }} />
+                        <span>{renderInline(item.content)}</span>
+                      </li>
+                    );
+                  }
+                  const isOrdered = /^\d/.test(item.marker);
+                  return (
+                    <li key={iidx} style={{ display: 'flex', gap: '0.5rem', paddingLeft, marginBottom: '0.35rem' }}>
+                      <span style={{ color: '#a1a1aa', minWidth: '1rem', fontSize: '0.95rem' }}>{isOrdered ? item.marker : '•'}</span>
+                      <span>{renderInline(item.content)}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            );
+            
+          case 'empty':
+            return <div key={idx} style={{ height: '0.5rem' }} />;
+            
+          case 'paragraph':
+          default:
+            return <p key={idx} style={{ fontSize: '0.95rem', lineHeight: '1.65', marginBottom: '0.85rem', color: '#e4e4e7' }}>{renderInline(block.content)}</p>;
+        }
+      })}
+    </div>
+  );
+}
+
 export default function WorkspacePage({ project, username, onBack }) {
   // Navigation & view states: "requirements" (Phase 1) or "ide" (Phase 2)
   const [viewMode, setViewMode] = useState("requirements");
+  const [selectedModel, setSelectedModel] = useState("nvidia/nemotron-3-ultra-550b-a55b:free");
 
   // Setup / Loading Overlay states
   const [setupLoading, setSetupLoading] = useState(false);
@@ -182,111 +501,189 @@ export default function WorkspacePage({ project, username, onBack }) {
       }
     }, 150);
   };
+  // Centralized stream helper for chat requests
+  const streamChatMessage = async (msgText, chatType) => {
+    const isReq = chatType === "requirements";
+    const setMessages = isReq ? setReqMessages : setIdeMessages;
+    const setIsSending = isReq ? setIsSendingReq : setIsSendingIde;
+    
+    setIsSending(true);
+    
+    const tempUserMsg = {
+      id: Date.now(),
+      project_id: project.id,
+      role: "user",
+      content: msgText,
+      chat_type: chatType,
+      created_at: new Date().toISOString()
+    };
+    setMessages((prev) => [...prev, tempUserMsg]);
+    
+    const assistantTempId = Date.now() + 1;
+    const tempAssistantMsg = {
+      id: assistantTempId,
+      role: "assistant",
+      content: "",
+      chat_type: chatType,
+      created_at: new Date().toISOString()
+    };
+    setMessages((prev) => [...prev, tempAssistantMsg]);
+    
+    try {
+      const response = await fetch(`http://localhost:8000/api/v1/projects/${project.id}/chat/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          content: msgText, 
+          chat_type: chatType,
+          model: selectedModel
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error("Failed to start stream");
+      }
+      
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let accumulatedText = "";
+      let remainder = "";
+      let isDbCommitted = false;
+      
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          if (remainder) {
+            processSSELine(remainder);
+          }
+          break;
+        }
+        
+        const chunk = remainder + decoder.decode(value, { stream: true });
+        const lines = chunk.split("\n");
+        remainder = lines.pop() || "";
+        
+        for (const line of lines) {
+          processSSELine(line);
+        }
+      }
+      
+      function processSSELine(line) {
+        if (!line.startsWith("data: ")) return;
+        const dataStr = line.slice(6).trim();
+        if (!dataStr) return;
+        try {
+          const dataJson = JSON.parse(dataStr);
+          if (dataJson.error) {
+            setMessages((prev) => 
+              prev.map(m => m.id === assistantTempId ? { ...m, content: "Error: " + dataJson.error } : m)
+            );
+            return;
+          }
+          if (dataJson.done) {
+            isDbCommitted = true;
+            return;
+          }
+          if (dataJson.content) {
+            accumulatedText += dataJson.content;
+            
+            let chatReply = "";
+            let requirements = "";
+            
+            const chatRegex = /===\s*CHAT_?REPLY\s*===/i;
+            const reqRegex = /===\s*REQUIREMENTS\s*===/i;
+            
+            const chatMatch = accumulatedText.match(chatRegex);
+            const reqMatch = accumulatedText.match(reqRegex);
+            
+            if (chatMatch && reqMatch) {
+              const chatIndex = chatMatch.index;
+              const reqIndex = reqMatch.index;
+              const chatEnd = chatIndex + chatMatch[0].length;
+              const reqEnd = reqIndex + reqMatch[0].length;
+              
+              if (chatIndex < reqIndex) {
+                chatReply = accumulatedText.substring(chatEnd, reqIndex);
+                requirements = accumulatedText.substring(reqEnd);
+              } else {
+                requirements = accumulatedText.substring(reqEnd, chatIndex);
+                chatReply = accumulatedText.substring(chatEnd);
+              }
+            } else if (chatMatch) {
+              const chatEnd = chatMatch.index + chatMatch[0].length;
+              chatReply = accumulatedText.substring(chatEnd);
+            } else if (reqMatch) {
+              const reqEnd = reqMatch.index + reqMatch[0].length;
+              requirements = accumulatedText.substring(reqEnd);
+            } else {
+              chatReply = accumulatedText;
+            }
+            
+            setMessages((prev) => 
+              prev.map(m => m.id === assistantTempId ? { ...m, content: chatType === "coder" ? accumulatedText : chatReply } : m)
+            );
+            
+            if (isReq && requirements) {
+              setRequirementsContent(requirements);
+              setTempRequirements(requirements);
+              setRequirementsGenerated(true);
+            }
+          }
+        } catch (e) {
+          // Ignore json parse error for split lines
+        }
+      }
+      
+      // Wait for DB commit to complete
+      if (!isDbCommitted) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } else {
+        await new Promise(resolve => setTimeout(resolve, 150));
+      }
+      
+      // Resync history and chat to get correct IDs & versions from database
+      if (isReq) {
+        const refreshResponse = await fetch(`http://localhost:8000/api/v1/projects/${project.id}/chat?chat_type=requirements`);
+        if (refreshResponse.ok) {
+          const data = await refreshResponse.json();
+          setReqMessages(data.messages);
+          setRequirementsHistory(data.requirements_history || []);
+          if (data.requirements_content) {
+            setRequirementsContent(data.requirements_content);
+            setTempRequirements(data.requirements_content);
+          }
+        }
+      } else {
+        const refreshResponse = await fetch(`http://localhost:8000/api/v1/projects/${project.id}/chat?chat_type=coder`);
+        if (refreshResponse.ok) {
+          const data = await refreshResponse.json();
+          setIdeMessages(data.messages);
+        }
+      }
+      
+    } catch (err) {
+      console.error("Error streaming chat:", err);
+      setMessages((prev) => 
+        prev.map(m => m.id === assistantTempId ? { ...m, content: "Network error occurred. Please try again." } : m)
+      );
+    } finally {
+      setIsSending(false);
+    }
+  };
 
   // Send Requirements Gathering Message (Phase 1)
   const handleSendReqMessage = async (e) => {
     e?.preventDefault();
     const msgText = reqInputMessage.trim();
     if (!msgText || isSendingReq) return;
-
     setReqInputMessage("");
-    setIsSendingReq(true);
-
-    const tempUserMsg = {
-      id: Date.now(),
-      project_id: project.id,
-      role: "user",
-      content: msgText,
-      chat_type: "requirements",
-      created_at: new Date().toISOString()
-    };
-    setReqMessages((prev) => [...prev, tempUserMsg]);
-
-    try {
-      const response = await fetch(`http://localhost:8000/api/v1/projects/${project.id}/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: msgText, chat_type: "requirements" })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data.message) {
-          setReqMessages((prev) => {
-            const filtered = prev.filter((m) => m.id !== tempUserMsg.id);
-            return [...filtered, tempUserMsg, data.message];
-          });
-          if (data.requirements_content) {
-            setRequirementsContent(data.requirements_content);
-            setTempRequirements(data.requirements_content);
-            setRequirementsGenerated(true);
-          }
-          if (data.requirements_history) {
-            setRequirementsHistory(data.requirements_history);
-          }
-        } else {
-          setReqMessages((prev) => {
-            const filtered = prev.filter((m) => m.id !== tempUserMsg.id);
-            return [...filtered, tempUserMsg, data];
-          });
-        }
-      }
-    } catch (err) {
-      console.error("Network error sending requirements message:", err);
-    } finally {
-      setIsSendingReq(false);
-    }
+    await streamChatMessage(msgText, "requirements");
   };
 
   // Triggered by clicking Suggestion Chips
   const handleSuggestionClick = async (suggestionText) => {
     if (isSendingReq) return;
-    setIsSendingReq(true);
-
-    const tempUserMsg = {
-      id: Date.now(),
-      project_id: project.id,
-      role: "user",
-      content: suggestionText,
-      chat_type: "requirements",
-      created_at: new Date().toISOString()
-    };
-    setReqMessages((prev) => [...prev, tempUserMsg]);
-
-    try {
-      const response = await fetch(`http://localhost:8000/api/v1/projects/${project.id}/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: suggestionText, chat_type: "requirements" })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        if (data.message) {
-          setReqMessages((prev) => {
-            const filtered = prev.filter((m) => m.id !== tempUserMsg.id);
-            return [...filtered, tempUserMsg, data.message];
-          });
-          if (data.requirements_content) {
-            setRequirementsContent(data.requirements_content);
-            setTempRequirements(data.requirements_content);
-            setRequirementsGenerated(true);
-          }
-          if (data.requirements_history) {
-            setRequirementsHistory(data.requirements_history);
-          }
-        } else {
-          setReqMessages((prev) => {
-            const filtered = prev.filter((m) => m.id !== tempUserMsg.id);
-            return [...filtered, tempUserMsg, data];
-          });
-        }
-      }
-    } catch (err) {
-      console.error("Network error sending suggestion chat:", err);
-    } finally {
-      setIsSendingReq(false);
-    }
+    await streamChatMessage(suggestionText, "requirements");
   };
 
   // Select requirements history revision to preview in right panel
@@ -489,128 +886,17 @@ export default function WorkspacePage({ project, username, onBack }) {
     e.preventDefault();
     const msgText = ideInputMessage.trim();
     if (!msgText || isSendingIde) return;
-
     setIdeInputMessage("");
-    setIsSendingIde(true);
-
-    const tempUserMsg = {
-      id: Date.now(),
-      project_id: project.id,
-      role: "user",
-      content: msgText,
-      chat_type: "coder",
-      created_at: new Date().toISOString()
-    };
-    setIdeMessages((prev) => [...prev, tempUserMsg]);
-
-    try {
-      const response = await fetch(`http://localhost:8000/api/v1/projects/${project.id}/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: msgText, chat_type: "coder" })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setIdeMessages((prev) => {
-          const filtered = prev.filter((m) => m.id !== tempUserMsg.id);
-          return [...filtered, tempUserMsg, data];
-        });
-      }
-    } catch (err) {
-      console.error("Network error sending coding message:", err);
-    } finally {
-      setIsSendingIde(false);
-    }
+    await streamChatMessage(msgText, "coder");
   };
 
   // Render markdown tags inline
   const renderResponseMarkdown = (text) => {
-    if (!text) return null;
-    const lines = text.split("\n");
-    return lines.map((line, i) => {
-      let formatted = line
-        .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-        .replace(/`(.*?)`/g, "<code>$1</code>");
-      return (
-        <p key={i} style={{ marginBottom: "0.45rem" }} dangerouslySetInnerHTML={{ __html: formatted }} />
-      );
-    });
+    return <Markdown content={text} />;
   };
 
   const renderSpecsMarkdown = (text) => {
-    if (!text) return null;
-    const lines = text.split("\n");
-    const formatInline = (str) => {
-      let formatted = str
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-        .replace(/`(.*?)`/g, "<code>$1</code>");
-      return <span dangerouslySetInnerHTML={{ __html: formatted }} />;
-    };
-
-    let insideCode = false;
-    let codeContent = [];
-
-    return lines.map((line, i) => {
-      if (line.trim().startsWith("```")) {
-        if (insideCode) {
-          insideCode = false;
-          const content = codeContent.join("\n");
-          codeContent = [];
-          return (
-            <pre key={`code-${i}`} style={{ background: "#0c0c0f", padding: "1rem", borderRadius: "6px", overflowX: "auto", border: "1px solid #1a1a22", margin: "1rem 0" }}>
-              <code>{content}</code>
-            </pre>
-          );
-        } else {
-          insideCode = true;
-          return null;
-        }
-      }
-
-      if (insideCode) {
-        codeContent.push(line);
-        return null;
-      }
-
-      if (line.startsWith("# ")) {
-        return <h1 key={i}>{formatInline(line.substring(2))}</h1>;
-      }
-      if (line.startsWith("## ")) {
-        return <h2 key={i}>{formatInline(line.substring(3))}</h2>;
-      }
-      if (line.startsWith("### ")) {
-        return <h3 key={i}>{formatInline(line.substring(4))}</h3>;
-      }
-      if (line.startsWith("- ") || line.startsWith("* ")) {
-        return (
-          <li key={i} style={{ marginLeft: "1.5rem", listStyleType: "disc", marginBottom: "0.25rem" }}>
-            {formatInline(line.substring(2))}
-          </li>
-        );
-      }
-      if (/^\d+\.\s/.test(line)) {
-        return (
-          <li key={i} style={{ marginLeft: "1.5rem", listStyleType: "decimal", marginBottom: "0.25rem" }}>
-            {formatInline(line.replace(/^\d+\.\s/, ""))}
-          </li>
-        );
-      }
-      if (line.startsWith("> ")) {
-        return (
-          <blockquote key={i} style={{ borderLeft: "4px solid #6366f1", paddingLeft: "1rem", color: "#9ca3af", margin: "1rem 0", fontStyle: "italic" }}>
-            {formatInline(line.substring(2))}
-          </blockquote>
-        );
-      }
-      if (!line.trim()) {
-        return <div key={i} style={{ height: "0.75rem" }} />;
-      }
-      return <p key={i} style={{ marginBottom: "0.85rem" }}>{formatInline(line)}</p>;
-    });
+    return <Markdown content={text} />;
   };
 
   // --- RENDER BOOTSTRAP OVERLAY LOADING SCREEN ---
@@ -754,9 +1040,23 @@ export default function WorkspacePage({ project, username, onBack }) {
         <div className={styles.chatPane}>
           <div className={styles.chatHeader}>
             <h3>Phase 1: Query Optimizer Engine</h3>
-            <div className={styles.aiStatus}>
-              <span className={styles.aiStatusDot} />
-              <span>AI Analyst Active</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <select 
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                className={styles.modelSelect}
+              >
+                <option value="nvidia/nemotron-3-ultra-550b-a55b:free">Nemotron 550B (Free)</option>
+                <option value="meta-llama/llama-3-8b-instruct:free">Llama 3 8B (Free)</option>
+                <option value="mistralai/mistral-7b-instruct:free">Mistral 7B (Free)</option>
+                <option value="google/gemma-2-9b-it:free">Gemma 2 9B (Free)</option>
+                <option value="qwen/qwen-2-7b-instruct:free">Qwen 2 7B (Free)</option>
+                <option value="microsoft/phi-3-medium-128k-instruct:free">Phi 3 Medium (Free)</option>
+              </select>
+              <div className={styles.aiStatus}>
+                <span className={styles.aiStatusDot} />
+                <span>AI Analyst Active</span>
+              </div>
             </div>
           </div>
 
@@ -876,7 +1176,7 @@ export default function WorkspacePage({ project, username, onBack }) {
             )}
           </div>
 
-          <div style={{ flexGrow: 1, overflow: "hidden", position: "relative" }}>
+          <div style={{ flexGrow: 1, display: "flex", flexDirection: "column", overflow: "hidden", position: "relative" }}>
             {isGeneratingReq ? (
               <div className={styles.emptyPreview}>
                 <span className={styles.inlineSpinner} style={{ width: "32px", height: "32px", marginBottom: "1rem" }} />
@@ -1032,9 +1332,23 @@ export default function WorkspacePage({ project, username, onBack }) {
         <div className={styles.aiPanel}>
           <div className={styles.aiHeader}>
             <h3>Cursor AI Coder</h3>
-            <div className={styles.aiStatus}>
-              <span className={styles.aiStatusDot} />
-              <span>Phase 2 Broker</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <select 
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                className={styles.modelSelect}
+              >
+                <option value="nvidia/nemotron-3-ultra-550b-a55b:free">Nemotron 550B (Free)</option>
+                <option value="meta-llama/llama-3-8b-instruct:free">Llama 3 8B (Free)</option>
+                <option value="mistralai/mistral-7b-instruct:free">Mistral 7B (Free)</option>
+                <option value="google/gemma-2-9b-it:free">Gemma 2 9B (Free)</option>
+                <option value="qwen/qwen-2-7b-instruct:free">Qwen 2 7B (Free)</option>
+                <option value="microsoft/phi-3-medium-128k-instruct:free">Phi 3 Medium (Free)</option>
+              </select>
+              <div className={styles.aiStatus}>
+                <span className={styles.aiStatusDot} />
+                <span>Phase 2 Broker</span>
+              </div>
             </div>
           </div>
 

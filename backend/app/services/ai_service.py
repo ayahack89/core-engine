@@ -10,22 +10,24 @@ class AIService:
     @staticmethod
     def parse_ai_response(response_text: str) -> Dict[str, str]:
         """Parses the assistant's reply and requirements block using delimiters."""
+        import re
         chat_reply = ""
         requirements = ""
         
-        if "===CHAT_REPLY===" in response_text:
-            parts = response_text.split("===CHAT_REPLY===")
-            content_after = parts[1]
-            if "===REQUIREMENTS===" in content_after:
-                subparts = content_after.split("===REQUIREMENTS===")
-                chat_reply = subparts[0].strip()
-                requirements = subparts[1].strip()
+        chat_match = re.search(r'===\s*CHAT_?REPLY\s*===', response_text, re.IGNORECASE)
+        req_match = re.search(r'===\s*REQUIREMENTS\s*===', response_text, re.IGNORECASE)
+        
+        if chat_match and req_match:
+            if chat_match.start() < req_match.start():
+                chat_reply = response_text[chat_match.end():req_match.start()].strip()
+                requirements = response_text[req_match.end():].strip()
             else:
-                chat_reply = content_after.strip()
-        elif "===REQUIREMENTS===" in response_text:
-            parts = response_text.split("===REQUIREMENTS===")
-            chat_reply = parts[0].strip()
-            requirements = parts[1].strip()
+                requirements = response_text[req_match.end():chat_match.start()].strip()
+                chat_reply = response_text[chat_match.end():].strip()
+        elif chat_match:
+            chat_reply = response_text[chat_match.end():].strip()
+        elif req_match:
+            requirements = response_text[req_match.end():].strip()
         else:
             chat_reply = response_text.strip()
             
@@ -47,12 +49,14 @@ class AIService:
         
         # Build prompt
         system_instruction = """You are a Senior Systems Analyst, Product Manager, and User Query Optimizer Engine.
-Your primary goal is to help the user design their application and gather complete, detailed requirements.
+Your primary goal is to help the user design their application, optimize their queries, and compile comprehensive, final Software Requirements Specifications.
 
 Analyze the user's input and:
 1. Respond to the user's message, asking highly targeted, developer-first follow-up questions to extract missing specifications.
 2. Limit follow-up questions to 2-3 at a time so you don't overwhelm them.
-3. Simultaneously construct and update a comprehensive requirements document (markdown format).
+3. Simultaneously construct and update a comprehensive, finalized requirements.md document.
+
+The requirements.md file MUST serve as the absolute, single source of truth and a Query Optimizer blueprint for the project. At the end of the requirements.md file, you MUST include a dedicated section titled "## Coder Prompt Blueprint / Query Optimizer" containing a highly dense, optimized prompt outlining exactly how a developer-agent or coder LLM should bootstrap and implement the entire project.
 
 You MUST output your response in EXACTLY the following structure with delimiters. Do not deviate from this format:
 
@@ -60,7 +64,7 @@ You MUST output your response in EXACTLY the following structure with delimiters
 [Write your response to the user here. Keep it conversational, helpful, and professional.]
 
 ===REQUIREMENTS===
-[Write the full, updated requirements.md content here. It must start with # Project Specification. Maintain structured sections like Overview, Target Users, Core Features, Tech Stack, User Flows, etc.]
+[Write the full, updated requirements.md content here. It must start with # Project Specification. Maintain structured sections like Overview, Target Users, Core Features, Tech Stack, User Flows, Coder Prompt Blueprint / Query Optimizer, etc.]
 """
         
         # Build messages payload
@@ -216,3 +220,139 @@ Guidelines:
         except Exception as e:
             logger.error(f"Error calling OpenRouter API for coder chat: {e}", exc_info=True)
             return f"Error contacting Coder assistant: {str(e)}"
+
+    @staticmethod
+    async def stream_chat_reply(
+        chat_history: List[Dict[str, str]], 
+        current_requirements: str = "",
+        model: str = None
+    ):
+        """Sends the conversation history to OpenRouter and streams the response chunks."""
+        url = "https://openrouter.ai/api/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/b0nd589/core-engine",
+            "X-Title": "Core Engine Development Suite"
+        }
+        
+        system_instruction = """You are a Senior Systems Analyst, Product Manager, and User Query Optimizer Engine.
+Your primary goal is to help the user design their application, optimize their queries, and compile comprehensive, final Software Requirements Specifications.
+
+Analyze the user's input and:
+1. Respond to the user's message, asking highly targeted, developer-first follow-up questions to extract missing specifications.
+2. Limit follow-up questions to 2-3 at a time so you don't overwhelm them.
+3. Simultaneously construct and update a comprehensive, finalized requirements.md document.
+
+The requirements.md file MUST serve as the absolute, single source of truth and a Query Optimizer blueprint for the project. At the end of the requirements.md file, you MUST include a dedicated section titled "## Coder Prompt Blueprint / Query Optimizer" containing a highly dense, optimized prompt outlining exactly how a developer-agent or coder LLM should bootstrap and implement the entire project.
+
+You MUST output your response in EXACTLY the following structure with delimiters. Do not deviate from this format:
+
+===CHAT_REPLY===
+[Write your response to the user here. Keep it conversational, helpful, and professional.]
+
+===REQUIREMENTS===
+[Write the full, updated requirements.md content here. It must start with # Project Specification. Maintain structured sections like Overview, Target Users, Core Features, Tech Stack, User Flows, Coder Prompt Blueprint / Query Optimizer, etc.]
+"""
+        
+        messages = [{"role": "system", "content": system_instruction}]
+        
+        if current_requirements:
+            messages.append({
+                "role": "system",
+                "content": f"[CURRENT REQUIREMENTS DOCUMENT]\n{current_requirements}\n[END OF CURRENT REQUIREMENTS DOCUMENT]"
+            })
+            
+        for msg in chat_history:
+            messages.append({"role": msg["role"], "content": msg["content"]})
+            
+        payload = {
+            "model": model or settings.OPENROUTER_MODEL,
+            "messages": messages,
+            "temperature": 0.7,
+            "stream": True
+        }
+        
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                async with client.stream("POST", url, headers=headers, json=payload) as response:
+                    if response.status_code != 200:
+                        error_text = await response.aread()
+                        logger.error(f"OpenRouter API error in stream_chat_reply: {response.status_code} - {error_text.decode('utf-8', errors='ignore')}")
+                        yield f"data: {json.dumps({'error': 'Failed to connect to OpenRouter. Check credentials.'})}\n\n"
+                        return
+                    
+                    async for line in response.aiter_lines():
+                        if line.startswith("data: "):
+                            data_content = line[6:].strip()
+                            if data_content == "[DONE]":
+                                break
+                            try:
+                                data_json = json.loads(data_content)
+                                delta = data_json.get("choices", [{}])[0].get("delta", {})
+                                content = delta.get("content", "")
+                                if content:
+                                    yield f"data: {json.dumps({'content': content})}\n\n"
+                            except Exception as e:
+                                logger.error(f"Error parsing SSE stream line: {line} - {e}")
+        except Exception as e:
+            logger.error(f"Error calling OpenRouter API for streaming: {e}", exc_info=True)
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    @staticmethod
+    async def stream_coder_reply(chat_history: List[Dict[str, str]], model: str = None):
+        """Streams the coder conversation from OpenRouter."""
+        url = "https://openrouter.ai/api/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {settings.OPENROUTER_API_KEY}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://github.com/b0nd589/core-engine",
+            "X-Title": "Core Engine Development Suite"
+        }
+        
+        system_instruction = """You are a Staff Software Engineer and Coding Assistant.
+Your goal is to help the user implement their software based on the finalized requirements.md.
+
+Guidelines:
+- Provide high-quality, production-ready, clean code snippets.
+- Walk through implementation details, modular designs, database schemas, and testing strategies.
+- Maintain a highly technical, developer-first, concise tone.
+- Refer to the project's requirements.md file as the source of truth for features and system architectures.
+"""
+        
+        messages = [{"role": "system", "content": system_instruction}]
+        for msg in chat_history:
+            messages.append({"role": msg["role"], "content": msg["content"]})
+            
+        payload = {
+            "model": model or settings.OPENROUTER_MODEL,
+            "messages": messages,
+            "temperature": 0.5,
+            "stream": True
+        }
+        
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                async with client.stream("POST", url, headers=headers, json=payload) as response:
+                    if response.status_code != 200:
+                        error_text = await response.aread()
+                        logger.error(f"OpenRouter API error in stream_coder_reply: {response.status_code} - {error_text.decode('utf-8', errors='ignore')}")
+                        yield f"data: {json.dumps({'error': 'Failed to connect to OpenRouter. Check credentials.'})}\n\n"
+                        return
+                    
+                    async for line in response.aiter_lines():
+                        if line.startswith("data: "):
+                            data_content = line[6:].strip()
+                            if data_content == "[DONE]":
+                                break
+                            try:
+                                data_json = json.loads(data_content)
+                                delta = data_json.get("choices", [{}])[0].get("delta", {})
+                                content = delta.get("content", "")
+                                if content:
+                                    yield f"data: {json.dumps({'content': content})}\n\n"
+                            except Exception as e:
+                                logger.error(f"Error parsing SSE stream line: {line} - {e}")
+        except Exception as e:
+            logger.error(f"Error calling OpenRouter API for coder streaming: {e}", exc_info=True)
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"

@@ -22,8 +22,8 @@
   height: 100vh;
   background-color: #000000;
   color: #ededed;
-  font-family: var(--font-mono), "Geist Mono", "SF Mono", Menlo, Monaco, Consolas, monospace;
-  font-size: 0.825rem;
+  font-family: var(--font-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 0.85rem;
   overflow: hidden;
 }
 
@@ -205,6 +205,24 @@
   color: #10b981;
 }
 
+.modelSelect {
+  background-color: #18181b;
+  border: 1px solid #27272a;
+  color: #d4d4d8;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  outline: none;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.2s ease;
+}
+
+.modelSelect:hover {
+  border-color: #3f3f46;
+  color: #ffffff;
+}
+
 .aiStatusDot {
   width: 6px;
   height: 6px;
@@ -234,6 +252,7 @@
 .messageRow {
   display: flex;
   width: 100%;
+  margin-bottom: 1.5rem;
 }
 
 .messageRowUser {
@@ -241,77 +260,63 @@
 }
 
 .messageBubble {
-  max-width: 80%;
-  padding: 0.85rem 1.1rem;
-  border-radius: 12px;
-  font-size: 0.925rem;
-  line-height: 1.5;
+  max-width: 85%;
+  padding: 1rem 1.25rem;
+  font-size: 0.9rem;
+  line-height: 1.6;
   word-break: break-word;
 }
 
 .messageBubbleUser {
   background-color: #18181b;
   color: #ffffff;
-  border-bottom-right-radius: 2px;
+  border-radius: 16px;
+  border-bottom-right-radius: 4px;
   border: 1px solid #27272a;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
 .messageBubbleAssistant {
-  background-color: #09090b;
+  background-color: transparent;
   color: #e4e4e7;
-  border-bottom-left-radius: 2px;
-  border: 1px solid #1c1c1f;
+  border-radius: 0;
+  border: none;
+  padding-left: 0;
+  padding-right: 0;
+  width: 100%;
 }
 
 .messageBubbleAssistant p {
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.75rem;
 }
 
 .messageBubbleAssistant p:last-child {
   margin-bottom: 0;
 }
 
-.messageBubbleAssistant pre {
-  background-color: #08080a;
-  padding: 0.75rem;
-  border-radius: 6px;
-  overflow-x: auto;
-  font-family: var(--font-geist-mono), monospace;
-  font-size: 0.8rem;
-  border: 1px solid #1a1a22;
-  margin: 0.75rem 0;
-}
-
-.messageBubbleAssistant code {
-  font-family: var(--font-geist-mono), monospace;
-  font-size: 0.85rem;
-  background-color: #1a1a22;
-  padding: 0.15rem 0.3rem;
-  border-radius: 4px;
-}
-
 .chatInputContainer {
-  padding: 1.25rem;
+  padding: 1.5rem;
   border-top: 1px solid #1c1c1f;
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  background-color: #000000;
+  gap: 1rem;
+  background-color: #050507;
 }
 
 .inputWrapper {
   display: flex;
   align-items: center;
-  background-color: #09090b;
-  border: 1px solid #1c1c1f;
-  border-radius: 6px;
-  padding: 0.5rem 0.75rem;
+  background-color: #0e0e11;
+  border: 1px solid #27272a;
+  border-radius: 12px;
+  padding: 0.75rem 1rem;
   transition: all 0.2s ease;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
 }
 
 .inputWrapper:focus-within {
   border-color: #6366f1;
-  box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.2);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2), 0 4px 20px rgba(0, 0, 0, 0.15);
 }
 
 .chatInput {
@@ -319,7 +324,7 @@
   background: none;
   border: none;
   color: #ffffff;
-  font-size: 0.9rem;
+  font-size: 0.925rem;
   outline: none;
   resize: none;
   height: 24px;
@@ -327,26 +332,30 @@
 }
 
 .sendButton {
-  background: none;
+  background: #6366f1;
   border: none;
-  color: #6366f1;
+  color: #ffffff;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0.25rem;
-  border-radius: 4px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
   transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
 }
 
 .sendButton:hover:not(:disabled) {
-  background-color: #1e1b4b;
-  color: #a5b4fc;
+  background-color: #4f46e5;
+  transform: scale(1.05);
 }
 
 .sendButton:disabled {
+  background: #1f1f27;
   color: #4b5563;
   cursor: not-allowed;
+  box-shadow: none;
 }
 
 .generateBanner {

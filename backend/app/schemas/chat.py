@@ -10,6 +10,7 @@ class ChatMessageBase(BaseModel):
 class ChatMessageCreate(BaseModel):
     content: str
     chat_type: str = "requirements"
+    model: Optional[str] = None
 
 class ChatMessageResponse(ChatMessageBase):
     id: int
