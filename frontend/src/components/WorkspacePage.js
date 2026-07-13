@@ -363,6 +363,97 @@ export default function WorkspacePage({ project, username, onBack }) {
   const reqMessagesEndRef = useRef(null);
   const ideMessagesEndRef = useRef(null);
 
+  // Layout resizing states
+  const [leftWidth, setLeftWidth] = useState(230);
+  const [rightWidth, setRightWidth] = useState(360);
+  const [isResizingLeft, setIsResizingLeft] = useState(false);
+  const [isResizingRight, setIsResizingRight] = useState(false);
+
+  const lineNumbersRef = useRef(null);
+  const highlightRef = useRef(null);
+  const textareaRef = useRef(null);
+
+  const handleMouseDownLeft = (e) => {
+    e.preventDefault();
+    setIsResizingLeft(true);
+  };
+
+  const handleMouseDownRight = (e) => {
+    e.preventDefault();
+    setIsResizingRight(true);
+  };
+
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      if (isResizingLeft) {
+        const newWidth = Math.max(150, Math.min(450, e.clientX - 48));
+        setLeftWidth(newWidth);
+      }
+      if (isResizingRight) {
+        const newWidth = Math.max(250, Math.min(600, window.innerWidth - e.clientX));
+        setRightWidth(newWidth);
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsResizingLeft(false);
+      setIsResizingRight(false);
+    };
+
+    if (isResizingLeft || isResizingRight) {
+      document.addEventListener("mousemove", handleMouseMove);
+      document.addEventListener("mouseup", handleMouseUp);
+    }
+
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isResizingLeft, isResizingRight]);
+
+  const handleEditorScroll = (e) => {
+    if (lineNumbersRef.current) {
+      lineNumbersRef.current.scrollTop = e.target.scrollTop;
+    }
+    if (highlightRef.current) {
+      highlightRef.current.scrollTop = e.target.scrollTop;
+      highlightRef.current.scrollLeft = e.target.scrollLeft;
+    }
+  };
+
+  const highlightCode = (code, filename) => {
+    if (!code) return "";
+    const ext = filename ? filename.split('.').pop() : '';
+    const escapeHtml = (text) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    let escaped = escapeHtml(code);
+    
+    if (['js', 'jsx', 'ts', 'tsx', 'json', 'mjs', 'jsconfig'].includes(ext)) {
+      escaped = escaped.replace(/(["'`])(.*?)\1/g, '<span class="code-str">$1$2$1</span>');
+      const keywords = /\b(const|let|var|function|return|import|export|default|from|if|else|for|while|async|await|try|catch|class|extends|new|this|typeof|void|in|of|export|interface|type)\b/g;
+      escaped = escaped.replace(keywords, '<span class="code-keyword">$1</span>');
+      escaped = escaped.replace(/\b([a-zA-Z_]\w*)(?=\()/g, '<span class="code-func">$1</span>');
+      escaped = escaped.replace(/(\/\/.*|\/\*[\s\S]*?\*\/)/g, '<span class="code-comment">$1</span>');
+      escaped = escaped.replace(/\b(\d+)\b/g, '<span class="code-num">$1</span>');
+    } else if (ext === 'py') {
+      escaped = escaped.replace(/(["']{3}[\s\S]*?["']{3}|(["'])(.*?)\2)/g, '<span class="code-str">$1</span>');
+      const keywords = /\b(def|class|return|if|elif|else|for|while|import|from|as|in|is|not|and|or|try|except|finally|raise|with|lambda|pass|global|nonlocal|True|False|None)\b/g;
+      escaped = escaped.replace(keywords, '<span class="code-keyword">$1</span>');
+      escaped = escaped.replace(/\b([a-zA-Z_]\w*)(?=\()/g, '<span class="code-func">$1</span>');
+      escaped = escaped.replace(/(#.*)/g, '<span class="code-comment">$1</span>');
+      escaped = escaped.replace(/\b(\d+)\b/g, '<span class="code-num">$1</span>');
+    } else if (ext === 'md') {
+      escaped = escaped.replace(/^(#+ .*)$/gm, '<span class="code-header">$1</span>');
+      escaped = escaped.replace(/(```[\s\S]*?```)/g, '<span class="code-comment">$1</span>');
+      escaped = escaped.replace(/(\[[^\]]+\]\([^)]+\))/g, '<span class="code-func">$1</span>');
+      escaped = escaped.replace(/(\*\*.*?\*\*)/g, '<span class="code-keyword">$1</span>');
+    } else {
+      escaped = escaped.replace(/(["'])(.*?)\1/g, '<span class="code-str">$1$2$1</span>');
+      escaped = escaped.replace(/\b(class|import|from|function|return|def|if|else|for|while|try|except|const|let|var)\b/g, '<span class="code-keyword">$1</span>');
+      escaped = escaped.replace(/\b(\d+)\b/g, '<span class="code-num">$1</span>');
+    }
+    return escaped;
+  };
+
   const SUGGESTIONS = [
     "Define User Roles & Permissions",
     "Propose Tech Stack & Database Schema",
@@ -574,6 +665,9 @@ export default function WorkspacePage({ project, username, onBack }) {
         if (!dataStr) return;
         try {
           const dataJson = JSON.parse(dataStr);
+          if (dataJson.files_updated) {
+            fetchWorkspaceFileList();
+          }
           if (dataJson.error) {
             setMessages((prev) => 
               prev.map(m => m.id === assistantTempId ? { ...m, content: "Error: " + dataJson.error } : m)
@@ -1240,7 +1334,7 @@ export default function WorkspacePage({ project, username, onBack }) {
         </div>
 
         {/* Sidebar Explorer */}
-        <div className={styles.explorer}>
+        <div className={styles.explorer} style={{ width: leftWidth }}>
           <div className={styles.explorerHeader}>
             <h4>Explorer</h4>
             <span style={{ fontSize: "0.7rem", color: "#52525b" }}>{project.framework}</span>
@@ -1261,6 +1355,12 @@ export default function WorkspacePage({ project, username, onBack }) {
             ))}
           </div>
         </div>
+
+        {/* Left resize handle */}
+        <div 
+          className={`${styles.resizeHandle} ${isResizingLeft ? styles.resizeHandleActive : ""}`}
+          onMouseDown={handleMouseDownLeft}
+        />
 
         {/* Code Editor (Center Panel) */}
         <div className={styles.editorPane}>
@@ -1301,18 +1401,27 @@ export default function WorkspacePage({ project, username, onBack }) {
                   </div>
                 ) : (
                   <>
-                    <div className={styles.lineNumbers}>
+                    <div className={styles.lineNumbers} ref={lineNumbersRef}>
                       {fileContent.split("\n").map((_, lineIdx) => (
                         <div key={lineIdx}>{lineIdx + 1}</div>
                       ))}
                     </div>
 
-                    <textarea
-                      className={styles.codeArea}
-                      value={fileContent}
-                      onChange={(e) => setFileContent(e.target.value)}
-                      spellCheck="false"
-                    />
+                    <div className={styles.codeContainer}>
+                      <pre 
+                        className={styles.codeHighlight}
+                        ref={highlightRef}
+                        dangerouslySetInnerHTML={{ __html: highlightCode(fileContent, activeFile) }}
+                      />
+                      <textarea
+                        className={styles.codeAreaTransparent}
+                        ref={textareaRef}
+                        value={fileContent}
+                        onChange={(e) => setFileContent(e.target.value)}
+                        onScroll={handleEditorScroll}
+                        spellCheck="false"
+                      />
+                    </div>
                   </>
                 )}
               </div>
@@ -1328,8 +1437,14 @@ export default function WorkspacePage({ project, username, onBack }) {
           )}
         </div>
 
+        {/* Right resize handle */}
+        <div 
+          className={`${styles.resizeHandle} ${isResizingRight ? styles.resizeHandleActive : ""}`}
+          onMouseDown={handleMouseDownRight}
+        />
+
         {/* Cursor AI chat assistant (Right panel) */}
-        <div className={styles.aiPanel}>
+        <div className={styles.aiPanel} style={{ width: rightWidth }}>
           <div className={styles.aiHeader}>
             <h3>Cursor AI Coder</h3>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>

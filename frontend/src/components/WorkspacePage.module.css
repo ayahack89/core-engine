@@ -1340,4 +1340,97 @@
   background-color: #059669;
 }
 
+/* Resizing handles */
+.resizeHandle {
+  width: 4px;
+  background-color: #141414;
+  cursor: col-resize;
+  transition: background-color 0.2s;
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+.resizeHandle:hover, .resizeHandleActive {
+  background-color: #818cf8;
+}
+
+/* Syntax highlighted overlay editor */
+.codeContainer {
+  position: relative;
+  flex-grow: 1;
+  height: 100%;
+  overflow: hidden;
+  background-color: #030303;
+}
+
+.codeHighlight {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 1rem;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.85rem;
+  line-height: 1.5rem;
+  color: #abb2bf;
+  pointer-events: none;
+  white-space: pre;
+  overflow: hidden;
+  z-index: 1;
+  box-sizing: border-box;
+}
+
+.codeAreaTransparent {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 1rem;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.85rem;
+  line-height: 1.5rem;
+  background: transparent;
+  color: transparent;
+  caret-color: #ffffff;
+  resize: none;
+  border: none;
+  outline: none;
+  white-space: pre;
+  overflow: auto;
+  z-index: 2;
+  box-sizing: border-box;
+}
+
+/* Global theme color rules for parser injected spans */
+:global(.code-keyword) {
+  color: #569cd6;
+  font-weight: 600;
+}
+
+:global(.code-str) {
+  color: #ce9178;
+}
+
+:global(.code-func) {
+  color: #dcdcaa;
+}
+
+:global(.code-comment) {
+  color: #6a9955;
+  font-style: italic;
+}
+
+:global(.code-num) {
+  color: #b5cea8;
+}
+
+:global(.code-header) {
+  color: #569cd6;
+  font-weight: bold;
+}
+
 

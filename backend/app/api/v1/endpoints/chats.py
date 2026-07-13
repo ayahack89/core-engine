@@ -20,8 +20,47 @@ from app.schemas.chat import (
 from app.services.ai_service import AIService
 from app.services.project_service import ProjectService
 from app.core.config import settings
+import asyncio
+import re
 
 logger = logging.getLogger(__name__)
+
+def parse_files_from_response(text: str) -> list[dict]:
+    pattern = r"===FILE:\s*([^\n\r]+)===(.*?)(?:===END_FILE===|$)"
+    matches = re.findall(pattern, text, re.DOTALL)
+    files = []
+    for path, content in matches:
+        files.append({
+            "path": path.strip().replace("\\", "/"),
+            "content": content.strip()
+        })
+    return files
+
+async def install_dependencies(project_id: str, framework: str):
+    project_dir = os.path.join(settings.PROJECTS_ROOT, project_id)
+    if framework == "nextjs":
+        command = "npm install --silent"
+    else:
+        req_file = os.path.join(project_dir, "requirements.txt")
+        if not os.path.exists(req_file):
+            return 0, "No requirements.txt found", ""
+        pip_path = os.path.abspath(os.path.join(settings.PROJECTS_ROOT, "..", "backend", "venv", "bin", "pip"))
+        if not os.path.exists(pip_path):
+            pip_path = "pip"
+        command = f"{pip_path} install -r requirements.txt"
+    
+    try:
+        process = await asyncio.create_subprocess_shell(
+            command,
+            cwd=project_dir,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await process.communicate()
+        return process.returncode, stdout.decode(errors='ignore'), stderr.decode(errors='ignore')
+    except Exception as e:
+        return 1, "", str(e)
+
 router = APIRouter()
 
 @router.get("/{project_id}/chat", response_model=ChatSessionResponse)
@@ -275,7 +314,21 @@ async def stream_chat_message(
         full_response = ""
         try:
             if message_in.chat_type == "coder":
-                async for chunk in AIService.stream_coder_reply(chat_history, model=message_in.model):
+                # Build workspace context recursively
+                try:
+                    files_list = await ProjectService.list_project_files(project_id)
+                    workspace_files_content = []
+                    for f in files_list:
+                        content = await ProjectService.read_project_file(project_id, f)
+                        if len(content) > 10000:
+                            content = content[:10000] + "\n[Content truncated...]"
+                        workspace_files_content.append(f"--- FILE: {f} ---\n{content}\n")
+                    workspace_context = "\n".join(workspace_files_content)
+                except Exception as ctx_err:
+                    logger.error(f"Error loading project workspace context: {ctx_err}")
+                    workspace_context = "No files in project."
+                
+                async for chunk in AIService.stream_coder_reply(chat_history, workspace_context, model=message_in.model):
                     yield chunk
                     if chunk.startswith("data: "):
                         try:
@@ -297,8 +350,53 @@ async def stream_chat_message(
             
             # Post-processing after complete stream is received
             if full_response:
-                async with async_session_maker() as session:
-                    if message_in.chat_type == "coder":
+                if message_in.chat_type == "coder":
+                    # Parse file blocks from the response
+                    files_to_write = parse_files_from_response(full_response)
+                    if files_to_write:
+                        yield f"data: {json.dumps({'content': '\n\n🛠️ **[Agent Mode] Writing generated files to workspace...**\n'})}\n\n"
+                        await asyncio.sleep(0.1)
+                        
+                        package_json_updated = False
+                        requirements_txt_updated = False
+                        
+                        for file_info in files_to_write:
+                            path = file_info["path"]
+                            content = file_info["content"]
+                            
+                            yield f"data: {json.dumps({'content': f'- Writing `{path}`... '})}\n\n"
+                            try:
+                                await ProjectService.write_project_file(project_id, path, content)
+                                yield f"data: {json.dumps({'content': '✅ Done\n', 'files_updated': True})}\n\n"
+                                
+                                if path == "package.json":
+                                    package_json_updated = True
+                                elif path == "requirements.txt":
+                                    requirements_txt_updated = True
+                            except Exception as file_err:
+                                yield f"data: {json.dumps({'content': f'❌ Failed: {str(file_err)}\n'})}\n\n"
+                                
+                        # Run dependency installations if package.json or requirements.txt was updated
+                        if package_json_updated or requirements_txt_updated:
+                            yield f"data: {json.dumps({'content': '\n📦 **[Agent Mode] Dependencies updated. Installing packages...**\n'})}\n\n"
+                            
+                            async with async_session_maker() as session:
+                                proj_model = await ProjectService.get_project(session, project_id)
+                                framework = proj_model.framework if proj_model else "python"
+                            
+                            yield f"data: {json.dumps({'content': f'Running package manager for {framework}... '})}\n\n"
+                            
+                            try:
+                                returncode, stdout, stderr = await install_dependencies(project_id, framework)
+                                if returncode == 0:
+                                    yield f"data: {json.dumps({'content': '✅ Packages installed successfully.\n'})}\n\n"
+                                else:
+                                    yield f"data: {json.dumps({'content': f'❌ Install returned status {returncode}.\nDetails: {stderr or stdout}\n'})}\n\n"
+                            except Exception as inst_err:
+                                yield f"data: {json.dumps({'content': f'❌ Failed to run install command: {str(inst_err)}\n'})}\n\n"
+
+                    # Save coder assistant reply in DB
+                    async with async_session_maker() as session:
                         assistant_msg = ChatMessage(
                             project_id=project_id,
                             role="assistant",
@@ -307,11 +405,12 @@ async def stream_chat_message(
                         )
                         session.add(assistant_msg)
                         await session.commit()
-                    else:
-                        parsed = AIService.parse_ai_response(full_response)
-                        reply_text = parsed["chat_reply"]
-                        new_reqs = parsed["requirements"]
-                        
+                else:
+                    parsed = AIService.parse_ai_response(full_response)
+                    reply_text = parsed["chat_reply"]
+                    new_reqs = parsed["requirements"]
+                    
+                    async with async_session_maker() as session:
                         assistant_msg = ChatMessage(
                             project_id=project_id,
                             role="assistant",

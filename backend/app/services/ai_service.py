@@ -173,7 +173,7 @@ You must structure the generated markdown document exactly with the following se
             return ""
 
     @staticmethod
-    async def get_coder_reply(chat_history: List[Dict[str, str]]) -> str:
+    async def get_coder_reply(chat_history: List[Dict[str, str]], workspace_context: str = "") -> str:
         """Sends the coding conversation history to OpenRouter and retrieves the next coder assistant reply."""
         url = "https://openrouter.ai/api/v1/chat/completions"
         headers = {
@@ -183,23 +183,31 @@ You must structure the generated markdown document exactly with the following se
             "X-Title": "Core Engine Development Suite"
         }
         
-        system_instruction = """You are a Staff Software Engineer and Coding Assistant.
-Your goal is to help the user implement their software based on the finalized requirements.md.
+        system_instruction = f"""You are a Staff Software Engineer, Tech Lead, and Cursor.ai-style Vibe Coding Agent.
+Your goal is to build, implement, and maintain the software based solely on the requirements specified in the `requirements.md` file (which is the single source of truth for the project).
 
-Guidelines:
-- Provide high-quality, production-ready, clean code snippets.
-- Walk through implementation details, modular designs, database schemas, and testing strategies.
-- Maintain a highly technical, developer-first, concise tone.
-- Refer to the project's requirements.md file as the source of truth for features and system architectures.
+Here is the CURRENT WORKSPACE CONTEXT showing all existing files in the project directory:
+=========================================
+{workspace_context}
+=========================================
+
+Instructions:
+1. Thoroughly scan `requirements.md` to understand the entire project scope, tech stack, and user flows.
+2. Check `requirements.txt` (for Python projects) or `package.json` (for NextJS projects) for dependency versions.
+3. If the user asks to build or implement features, you must autonomously design and write all the code.
+4. To write new files or update existing files, you MUST use the exact file block delimiter format:
+===FILE: path/to/file===
+[file contents here]
+===END_FILE===
+
+You can specify multiple file blocks in your output. If you want to modify a file, output the ENTIRE updated content of the file. Write clean, professional, bug-free, production-quality, human-understandable code.
+5. In your chat response (the text outside file blocks), explain your plan, progress, and actions step-by-step. Keep the tone professional, technical, and developer-first.
+6. Make sure to keep any existing features intact unless the requirements request changes to them.
 """
         
         messages = [{"role": "system", "content": system_instruction}]
         for msg in chat_history:
             role = msg["role"]
-            if role == "assistant":
-                role = "assistant"
-            elif role == "user":
-                role = "user"
             messages.append({"role": role, "content": msg["content"]})
             
         payload = {
@@ -300,7 +308,7 @@ You MUST output your response in EXACTLY the following structure with delimiters
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
     @staticmethod
-    async def stream_coder_reply(chat_history: List[Dict[str, str]], model: str = None):
+    async def stream_coder_reply(chat_history: List[Dict[str, str]], workspace_context: str = "", model: str = None):
         """Streams the coder conversation from OpenRouter."""
         url = "https://openrouter.ai/api/v1/chat/completions"
         headers = {
@@ -310,14 +318,26 @@ You MUST output your response in EXACTLY the following structure with delimiters
             "X-Title": "Core Engine Development Suite"
         }
         
-        system_instruction = """You are a Staff Software Engineer and Coding Assistant.
-Your goal is to help the user implement their software based on the finalized requirements.md.
+        system_instruction = f"""You are a Staff Software Engineer, Tech Lead, and Cursor.ai-style Vibe Coding Agent.
+Your goal is to build, implement, and maintain the software based solely on the requirements specified in the `requirements.md` file (which is the single source of truth for the project).
 
-Guidelines:
-- Provide high-quality, production-ready, clean code snippets.
-- Walk through implementation details, modular designs, database schemas, and testing strategies.
-- Maintain a highly technical, developer-first, concise tone.
-- Refer to the project's requirements.md file as the source of truth for features and system architectures.
+Here is the CURRENT WORKSPACE CONTEXT showing all existing files in the project directory:
+=========================================
+{workspace_context}
+=========================================
+
+Instructions:
+1. Thoroughly scan `requirements.md` to understand the entire project scope, tech stack, and user flows.
+2. Check `requirements.txt` (for Python projects) or `package.json` (for NextJS projects) for dependency versions.
+3. If the user asks to build or implement features, you must autonomously design and write all the code.
+4. To write new files or update existing files, you MUST use the exact file block delimiter format:
+===FILE: path/to/file===
+[file contents here]
+===END_FILE===
+
+You can specify multiple file blocks in your output. If you want to modify a file, output the ENTIRE updated content of the file. Write clean, professional, bug-free, production-quality, human-understandable code.
+5. In your chat response (the text outside file blocks), explain your plan, progress, and actions step-by-step. Keep the tone professional, technical, and developer-first.
+6. Make sure to keep any existing features intact unless the requirements request changes to them.
 """
         
         messages = [{"role": "system", "content": system_instruction}]
